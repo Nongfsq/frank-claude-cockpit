@@ -84,7 +84,7 @@ Install both: the `PRs` button lives in `context-card` and appears only when `pr
 
 ## What leaves your machine
 
-- `context-card` asks `api.anthropic.com` for your own plan usage, once a minute, with the login Claude Code already holds. That request uses no tokens.
+- `context-card` asks `api.anthropic.com` for your own plan usage with the login Claude Code already holds, at most once every two minutes however many sessions are open: one session asks and the rest read its answer from `~/.claude/cache/context-card-usage.json`. That request uses no tokens.
 - `pr-pane` runs `git` and `gh` locally, in the project's folder.
 - **Ask here** sends one prompt in your current session, so it costs what a prompt costs there.
 

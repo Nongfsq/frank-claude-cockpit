@@ -1,6 +1,6 @@
 {
   "name": "context-card",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Context window breakdown and plan usage, in the band above the prompt.",
   "types": "./types/index.d.ts",
   "author": {

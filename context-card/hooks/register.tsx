@@ -101,20 +101,86 @@ const POLL_MS = 60_000
 // True once the account-wide figures came back; the session's own rate-limit headers then stop overriding them.
 let hasLive = false
 
+// What the last usage request found, kept in one file every session reads, so the account is asked once
+// for all of them and they all show the same figure.
+type Shared = { at: number; triedAt: number; retryAt: number; limits: Limit[]; ttlMs: number }
+
+const SHARE_MS = 120_000
+const BACKOFF_MS = 300_000
+const CLAIM_MS = 20_000
+
+const sharedPath = async ($: EngineInterface) => {
+  const home = await $.env.get('HOME').catch(() => undefined)
+
+  return typeof home === 'string' && home !== '' ? `${home}/.claude/cache/context-card-usage.json` : null
+}
+
+const readShared = async ($: EngineInterface, path: string | null): Promise<Shared | null> => {
+  if (path === null) {
+    return null
+  }
+
+  try {
+    const found = JSON.parse(await $.fs.read(path)) as Partial<Shared>
+
+    return {
+      at: Number(found.at) || 0,
+      triedAt: Number(found.triedAt) || 0,
+      retryAt: Number(found.retryAt) || 0,
+      limits: Array.isArray(found.limits) ? found.limits : [],
+      ttlMs: Number(found.ttlMs) || HOUR,
+    }
+  } catch {
+    return null
+  }
+}
+
+const writeShared = async ($: EngineInterface, path: string | null, value: Shared) => {
+  if (path !== null) {
+    await $.fs.write(path, JSON.stringify(value)).catch(() => undefined)
+  }
+}
+
+const show = async ($: EngineInterface, shared: Shared) => {
+  if (shared.limits.length === 0) {
+    return
+  }
+
+  hasLive = true
+  await update($, card, was => (was === null ? was : { ...was, limits: shared.limits }))
+  await update($, cache, was => ({ ...was, ttlMs: shared.ttlMs }))
+}
+
 // Account-wide plan usage, as the app's usage card reads it; covers every session, not just this one.
+// Each session calls this on its own timer, but only one of them sends the request: the rest read its result.
 const poll = async ($: EngineInterface) => {
+  const path = await sharedPath($)
+  const now = await $.clock.now()
+  const shared = (await readShared($, path)) ?? { at: 0, triedAt: 0, retryAt: 0, limits: [], ttlMs: HOUR }
+
+  await show($, shared)
+
+  // Fresh enough, told to wait after a refusal, or another session is asking right now.
+  if (now - shared.at < SHARE_MS || now < shared.retryAt || now - shared.triedAt < CLAIM_MS) {
+    return
+  }
+
   const auth = await $.session.authorize()
 
   if (auth === null) {
     return
   }
 
+  await writeShared($, path, { ...shared, triedAt: now })
   const response = await $.http.fetch(USAGE_URL, {
     headers: { 'anthropic-beta': 'oauth-2025-04-20' },
     auth: auth.handle,
   })
 
   if (!response.ok) {
+    // Refused (rate limited, usually): every session waits before any of them asks again.
+    await writeShared($, path, { ...shared, triedAt: now, retryAt: now + BACKOFF_MS })
+
     return
   }
 
@@ -131,13 +197,13 @@ const poll = async ($: EngineInterface) => {
     return
   }
 
-  hasLive = true
-  await update($, card, was => (was === null ? was : { ...was, limits }))
-
   // Past a plan limit with usage credits on, requests draw on credits and the cache drops to five minutes.
   const extra = body.extra_usage as { is_enabled?: unknown } | null
   const isDrawingCredits = extra?.is_enabled === true && limits.some(limit => limit.percentUsed >= 100)
-  await update($, cache, was => ({ ...was, ttlMs: isDrawingCredits ? 300_000 : HOUR }))
+  const next: Shared = { at: now, triedAt: now, retryAt: 0, limits, ttlMs: isDrawingCredits ? 300_000 : HOUR }
+
+  await writeShared($, path, next)
+  await show($, next)
 }
 
 const refresh = async ($: EngineInterface) => {

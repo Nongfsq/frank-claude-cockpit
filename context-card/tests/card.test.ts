@@ -117,3 +117,76 @@ test('draws the card and its collapsed line on both surfaces', async ($, on) => 
   expect(await cold.find({ text: /cache cold/ })).toBeDefined()
   await cold.unmount()
 })
+
+test('shows the usage another session fetched, and asks the account once when it is stale', async ($, on) => {
+  const NOW = Date.parse('2026-10-03T00:30:00Z')
+  let file = JSON.stringify({
+    at: NOW - 30_000,
+    triedAt: NOW - 30_000,
+    retryAt: 0,
+    limits: [{ kind: 'seven_day', percentUsed: 42, resetsAt: '2026-10-06T03:30:00Z' }],
+    ttlMs: 3_600_000,
+  })
+  let fetches = 0
+  let clockNow = NOW
+
+  on('session.usage', () => ({
+    value: {
+      startedAt: 0,
+      context: {
+        window: 1_000_000,
+        tokens: 145_000,
+        percent: 14,
+        breakdown: {
+          categories: [category('Messages', 145_000, 'purple_FOR_SUBAGENTS_ONLY'), category('Free space', 855_000, 'promptBorder', 'free')],
+          totalTokens: 145_000,
+          maxTokens: 1_000_000,
+          rawMaxTokens: 1_000_000,
+          autocompactSource: 'model',
+          percentage: 14,
+          gridRows: [],
+          model: 'claude-opus-5-5',
+          memoryFiles: [],
+          mcpTools: [],
+          agents: [],
+          autoCompactThreshold: 970_000,
+          isAutoCompactEnabled: true,
+          apiUsage: null,
+        },
+      },
+      rateLimits: [{ kind: 'seven_day', percentUsed: 18, resetsAt: '2026-10-08T01:00:00Z' }],
+    },
+  }))
+  on('env.get', () => ({ value: '/home/me' }))
+  on('fs.read', () => ({ value: file }))
+  on('fs.write', ($, e) => {
+    file = e.text
+    return { value: undefined }
+  })
+  on('session.authorize', () => ({ value: { handle: 'h' } }))
+  on('http.fetch', () => {
+    fetches += 1
+    return { value: { ok: true, status: 200, text: JSON.stringify({ seven_day: { utilization: 55, resets_at: '2026-10-06T03:30:00Z' } }) } }
+  })
+  on('clock.now', () => ({ value: clockNow }))
+  on('clock.every', () => ({ value: undefined }))
+  on('session.start', ($, e) => ({ cwd: e.cwd }))
+  on('command.list', () => ({ value: [] }))
+
+  // Another session fetched 30 seconds ago: its figure and reset time are shown, and nothing is requested.
+  await $.session.start({ cwd: '/', surface: 'desktop', isInteractive: true })
+  const ui = await $.ui.mount({ ...BAND, surface: 'desktop' })
+  expect(await ui.find({ text: /^42%$/ })).toBeDefined()
+  expect(await ui.find({ text: /^↻ 3d 3h$/ })).toBeDefined()
+  expect(fetches).toBe(0)
+  await ui.unmount()
+
+  // Three minutes on the shared figure is stale: this session asks, and the answer goes back into the file.
+  clockNow += 180_000
+  await $.session.start({ cwd: '/', surface: 'desktop', isInteractive: true })
+  const later = await $.ui.mount({ ...BAND, surface: 'desktop' })
+  expect(await later.find({ text: /^55%$/ })).toBeDefined()
+  expect(fetches).toBe(1)
+  expect(JSON.parse(file).limits[0].percentUsed).toBe(55)
+  await later.unmount()
+})
