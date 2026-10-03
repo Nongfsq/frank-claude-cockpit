@@ -1,0 +1,17 @@
+{
+  "name": "frank-claude-cockpit",
+  "owner": { "name": "Nongfsq" },
+  "metadata": { "description": "Two Claude Code mods for running many sessions at once: a context card above the prompt and a sessions pane beside the chat." },
+  "plugins": [
+    {
+      "name": "context-card",
+      "source": "./context-card",
+      "description": "Context window breakdown, prompt-cache state and weekly plan usage, in one line above the prompt."
+    },
+    {
+      "name": "pr-pane",
+      "source": "./pr-pane",
+      "description": "Every session of the project with its worktree, PR and status in a side pane, and one click to ask about them."
+    }
+  ]
+}

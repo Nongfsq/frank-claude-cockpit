@@ -1,0 +1,11 @@
+{
+  "name": "pr-pane",
+  "version": "0.1.0",
+  "description": "Sessions of this project, their worktrees and PRs, with check-ins, in a side pane.",
+  "types": "./types/index.d.ts",
+  "author": {
+    "name": "Nongfsq"
+  },
+  "license": "MIT",
+  "repository": "https://github.com/Nongfsq/frank-claude-cockpit"
+}

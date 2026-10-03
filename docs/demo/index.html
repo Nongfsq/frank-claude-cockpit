@@ -1,0 +1,303 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Claude Code Cockpit demo</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<style>
+/* A scripted walkthrough of the two mods. Every animated value is computed from one clock, `t` in ms, so a
+   recorder can step it frame by frame: open with ?t=1500 for a still, or call window.setT(ms). */
+:root {
+  --stage: #0E0E0D; --window: #171716; --band: #222220; --edge: #2E2D2B; --text: #F2F1EC; --dim: #8F8E89;
+  --rule: #6B6A66; --button: #343331; --bubble: #262624; --claude: #D97757; --blue: #7AA2F7; --working: #B1B9F9;
+  --merged: #AF87FF; --success: #4EBA65; --warning: #FFC107; --link: #8AB4F8; --cursor: #FFFFFF; --cursor-edge: #000000;
+}
+:root[data-theme="light"] {
+  --stage: #EAE8E1; --window: #FAFAF8; --band: #EFEEEC; --edge: #DDDBD6; --text: #1A1A19; --dim: #6B6A66;
+  --rule: #A3A19A; --button: #F8F7F5; --bubble: #EFEEEC; --claude: #D05A36; --blue: #2A4FA3; --working: #5769F7;
+  --merged: #8700FF; --success: #2C7A39; --warning: #966C1E; --link: #2B5AB8; --cursor: #1A1A19; --cursor-edge: #FFFFFF;
+}
+* { box-sizing: border-box; }
+html, body { margin: 0; background: var(--stage); }
+body { font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'Segoe UI', system-ui, sans-serif; font-size: 14px; line-height: 20px; color: var(--text); }
+.num { font-variant-numeric: tabular-nums; }
+.dim { color: var(--dim); }
+.bold { font-weight: 650; }
+.trunc { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+#stage { position: relative; width: 1200px; height: 720px; overflow: hidden; background: var(--stage); }
+#window { position: absolute; left: 40px; top: 28px; width: 1120px; height: 606px; border-radius: 14px; border: 1px solid var(--edge); background: var(--window); overflow: hidden; display: flex; flex-direction: column; }
+#titlebar { height: 38px; flex-shrink: 0; display: flex; align-items: center; gap: 8px; padding: 0 14px; border-bottom: 1px solid var(--edge); }
+.light { width: 11px; height: 11px; border-radius: 50%; background: var(--edge); }
+#titlebar .name { margin-left: 10px; color: var(--dim); }
+#body { flex: 1; display: flex; min-height: 0; }
+#main { flex: 1; min-width: 0; display: flex; flex-direction: column; padding: 0 28px 20px; }
+#transcript { flex: 1; min-height: 0; overflow: hidden; display: flex; flex-direction: column; justify-content: flex-end; gap: 14px; padding-bottom: 18px; }
+.skeleton { display: flex; flex-direction: column; gap: 9px; }
+.skeleton span { height: 9px; border-radius: 5px; background: var(--edge); }
+.reveal { overflow: hidden; flex-shrink: 0; }
+.user { align-self: flex-end; max-width: 78%; padding: 9px 13px; border-radius: 12px; background: var(--bubble); }
+.answer { display: flex; flex-direction: column; gap: 6px; }
+.answer .line { display: flex; gap: 8px; }
+.answer .line .dot { color: var(--dim); }
+
+/* The card: one band above the prompt. */
+#band { border-radius: 12px; background: var(--band); display: flex; flex-direction: column; flex-shrink: 0; }
+#breakdownWrap { overflow: hidden; }
+#breakdown { padding: 14px 16px; border: 1px solid var(--edge); border-radius: 12px; display: flex; flex-direction: column; gap: 12px; }
+#breakdown .head { display: flex; align-items: baseline; justify-content: space-between; }
+.legend { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); column-gap: 28px; row-gap: 4px; }
+.legend div { display: flex; align-items: center; gap: 8px; }
+.legend .v { margin-left: auto; }
+.swatch { width: 9px; height: 9px; border-radius: 50%; flex-shrink: 0; }
+#line { display: flex; align-items: center; gap: 16px; height: 40px; padding: 0 8px 0 16px; }
+.bar { display: flex; align-items: center; height: 20px; }
+.bar i { display: block; height: 2px; flex-shrink: 0; }
+.bar .rest { flex: 1; height: 1px; background: var(--rule); }
+.pie { width: 10px; height: 10px; border-radius: 50%; background: var(--dim); flex-shrink: 0; }
+.btn { font: inherit; line-height: 20px; padding: 3px 10px; border: 0; border-radius: 7px; background: var(--button); color: var(--text); box-shadow: inset 0 0 0 1px var(--edge); white-space: nowrap; }
+#prompt { margin-top: 10px; border: 1px solid var(--edge); border-radius: 14px; padding: 14px 16px; color: var(--dim); flex-shrink: 0; }
+
+/* The sessions pane, docked on the right. */
+#paneWrap { flex-shrink: 0; overflow: hidden; border-left: 1px solid var(--edge); }
+#pane { width: 400px; height: 100%; display: flex; flex-direction: column; }
+#paneHead { display: flex; align-items: center; justify-content: space-between; padding: 10px 14px 6px 20px; color: var(--dim); }
+#paneBody { display: flex; flex-direction: column; padding: 6px 20px 20px; }
+.header { display: flex; align-items: center; gap: 16px; min-height: 26px; }
+.section { display: flex; flex-direction: column; margin-top: 16px; }
+.heading { display: flex; align-items: baseline; gap: 8px; }
+.row { display: flex; flex-direction: column; }
+.row .top { display: flex; align-items: baseline; }
+.mark { width: 16px; height: 20px; flex-shrink: 0; align-self: center; display: inline-flex; align-items: center; }
+.mark b { width: 9px; height: 9px; border-radius: 50%; display: block; }
+.mark b.half { border: 1.5px solid var(--working); background-origin: border-box; background-image: linear-gradient(90deg, var(--working) 50%, transparent 50%); }
+.tag { width: 76px; flex-shrink: 0; color: var(--dim); }
+.title { flex: 1; }
+.age { flex-shrink: 0; padding-left: 16px; color: var(--dim); }
+.second { display: flex; align-items: baseline; gap: 16px; padding-left: 16px; }
+.link { color: var(--link); }
+.details { padding: 12px 0 12px 16px; display: flex; flex-direction: column; gap: 12px; }
+.details .grid div { display: flex; align-items: baseline; }
+.details .k { width: 76px; flex-shrink: 0; color: var(--dim); }
+.actions { display: flex; align-items: center; gap: 16px; }
+
+/* The pointer, its click ring, and the caption under the window. */
+#cursor { position: absolute; left: 0; top: 0; width: 22px; height: 22px; pointer-events: none; z-index: 5; }
+#ring { position: absolute; left: 0; top: 0; width: 44px; height: 44px; margin: -22px 0 0 -22px; border-radius: 50%; border: 2px solid var(--claude); pointer-events: none; z-index: 4; opacity: 0; }
+#caption { position: absolute; left: 0; right: 0; top: 652px; text-align: center; font-size: 17px; line-height: 24px; }
+#caption b { font-weight: 650; }
+#progress { position: absolute; left: 40px; top: 706px; height: 2px; background: var(--claude); opacity: .7; }
+</style>
+</head>
+<body>
+<div id="stage">
+  <div id="window">
+    <div id="titlebar"><span class="light"></span><span class="light"></span><span class="light"></span><span class="name">Atlas main</span></div>
+    <div id="body">
+      <div id="main">
+        <div id="transcript">
+          <div class="skeleton"><span style="width: 62%"></span><span style="width: 81%"></span><span style="width: 44%"></span></div>
+          <div class="skeleton"><span style="width: 74%"></span><span style="width: 38%"></span></div>
+          <div class="reveal" id="ask1"><div style="display: flex; flex-direction: column; gap: 14px">
+            <div class="user">Report the status of “API-145 webhook signatures” without messaging it.</div>
+            <div class="answer">
+              <div class="line"><span class="dot">●</span><span><span class="bold">API-145 webhook signatures</span> — HMAC verification is in and unit tests pass. CI on #45 is still running, 2 of 5 jobs done. No blocker; not ready to merge until CI is green.</span></div>
+            </div>
+          </div></div>
+          <div class="reveal" id="ask2"><div style="display: flex; flex-direction: column; gap: 14px">
+            <div class="user">Report the status of the 2 working sessions without messaging them.</div>
+            <div class="answer">
+              <div class="line"><span class="dot">●</span><span><span class="bold">API-142 rate-limit retries</span> — backoff is done, writing the integration test. PR #44 is open and green on the last push.</span></div>
+              <div class="line"><span class="dot">●</span><span><span class="bold">API-145 webhook signatures</span> — waiting on CI for #45. Nothing blocked.</span></div>
+            </div>
+          </div></div>
+        </div>
+
+        <div id="band">
+          <div id="breakdownWrap"><div id="breakdownInner" style="padding: 8px 8px 2px">
+            <div id="breakdown">
+              <div class="head">
+                <span class="num"><span class="bold" style="color: var(--claude)">27%</span> <span class="dim">of the context window</span></span>
+                <span class="num dim" style="display: flex; gap: 16px"><span style="display: inline-flex; align-items: center; gap: 6px"><span class="pie"></span>52m</span><span>auto-compact at 967k</span></span>
+              </div>
+              <div class="bar" id="bigBar"></div>
+              <div class="legend num" id="legend"></div>
+            </div>
+          </div></div>
+          <div id="line">
+            <span class="num bold" style="color: var(--claude)">27%</span>
+            <span class="num dim">272.3k / 1M</span>
+            <span class="pie"></span>
+            <div class="bar" id="smallBar" style="width: 182px"></div>
+            <span style="flex: 1"></span>
+            <span class="num" style="display: flex; gap: 7px"><span class="dim">weekly</span><span class="bold" style="color: var(--blue)">20%</span><span class="dim">↻ 4d 21h</span></span>
+            <span style="display: flex; align-items: center; gap: 8px"><button class="btn" id="prs" type="button">PRs</button><span class="num bold" style="color: var(--warning)">1</span></span>
+          </div>
+        </div>
+        <div id="prompt">Reply to Claude…</div>
+      </div>
+
+      <div id="paneWrap"><div id="pane">
+        <div id="paneHead"><span>Sessions</span><span>✕</span></div>
+        <div id="paneBody">
+          <div class="header">
+            <span class="bold">Atlas</span><span class="num dim" id="live">live · 4s</span><span style="flex: 1"></span>
+            <button class="btn" id="askAll" type="button">Ask 2 working</button><span>↻</span>
+          </div>
+
+          <div class="section">
+            <div class="heading"><span class="bold">Needs you</span><span class="num dim">1</span></div>
+            <div class="row">
+              <div class="top"><span class="mark"><b style="background: var(--success)"></b></span><span class="tag num">API-138</span><span class="title trunc">pagination cursors</span><span class="age num">6m</span></div>
+              <div class="second"><span style="color: var(--success)">ready to merge</span><span class="link num">#41</span></div>
+            </div>
+          </div>
+
+          <div class="section">
+            <div class="heading"><span class="bold">Working</span><span class="num dim">2</span></div>
+            <div class="row">
+              <div class="top"><span class="mark"><b class="half"></b></span><span class="tag num">API-142</span><span class="title trunc">rate-limit retries</span><span class="age num">12m</span></div>
+              <div class="second"><span style="color: var(--working)">working</span><span class="link num">#44</span></div>
+            </div>
+            <div class="row">
+              <div class="top" id="row145"><span class="mark"><b class="half"></b></span><span class="tag num">API-145</span><span class="title trunc" id="title145">webhook signatures</span><span class="age num">47m</span></div>
+              <div class="second"><span style="color: var(--working)">working · CI running</span><span class="link num">#45</span></div>
+              <div class="reveal" id="details"><div class="details">
+                <div class="grid">
+                  <div><span class="k">worktree</span><span class="trunc">brave-hopper-3f2a1c</span></div>
+                  <div><span class="k">branch</span><span class="trunc">claude/brave-hopper-3f2a1c</span></div>
+                  <div><span class="k">PR</span><span class="trunc">#45 · CI running</span></div>
+                  <div><span class="k">activity</span><span class="trunc">working 47m</span></div>
+                </div>
+                <div class="actions"><button class="btn" id="askOne" type="button">Ask here</button><span class="link">PR ↗</span></div>
+              </div></div>
+            </div>
+          </div>
+
+          <div class="section">
+            <div class="heading" id="doneHeading"><span id="doneLabel">Done</span><span class="num dim">2</span></div>
+            <div class="reveal" id="done"><div>
+              <div class="row"><div class="top"><span class="mark"><b style="background: var(--merged)"></b></span><span class="tag num">API-133</span><span class="title trunc">idempotency keys</span><span class="age num">2h</span></div><div class="second"><span style="color: var(--merged)">merged</span><span class="link num">#39</span></div></div>
+              <div class="row"><div class="top"><span class="mark"><b style="background: var(--merged)"></b></span><span class="tag num">API-131</span><span class="title trunc">request tracing headers</span><span class="age num">3h</span></div><div class="second"><span style="color: var(--merged)">merged</span><span class="link num">#38</span></div></div>
+            </div></div>
+          </div>
+        </div>
+      </div></div>
+    </div>
+  </div>
+
+  <div id="ring"></div>
+  <svg id="cursor" viewBox="0 0 22 22"><path d="M3 2l0 15.5 4.2-3.9 2.6 6 2.6-1.1-2.6-5.9 5.7-.3z" fill="var(--cursor)" stroke="var(--cursor-edge)" stroke-width="1.2" stroke-linejoin="round"/></svg>
+  <div id="caption"></div>
+  <div id="progress"></div>
+</div>
+
+<script>
+(function () {
+  var params = new URLSearchParams(location.search)
+  if (params.get('theme') === 'light') document.documentElement.setAttribute('data-theme', 'light')
+
+  var $ = function (id) { return document.getElementById(id) }
+  var SLICES = [['messages', 196000, '#827DBD'], ['tools', 31200, '#C9C8BF'], ['mcp', 23400, '#0891B2'], ['skills', 10000, '#D4940A'], ['system', 4800, '#6B6A66'], ['memory', 1200, '#D97757']]
+  var compact = function (n) { return (Math.round(n / 100) / 10 + 'k').replace('.0k', 'k') }
+  var bars = SLICES.map(function (s) { return '<i style="width: ' + Math.max(s[1] / 10000, 0.6) + '%; background: ' + s[2] + '"></i>' }).join('') + '<i class="rest"></i>'
+  $('bigBar').innerHTML = bars
+  $('smallBar').innerHTML = bars
+  $('legend').innerHTML = SLICES.map(function (s) {
+    return '<div><span class="swatch" style="background: ' + s[2] + '"></span><span class="dim">' + s[0] + '</span><span class="v">' + compact(s[1]) + '</span></div>'
+  }).join('')
+
+  // The script: each step moves the pointer to a target, clicks at `at`, and the caption explains it.
+  var STEPS = [
+    { at: 1500, target: 'smallBar', caption: '<b>Click the bar</b> — see where the context went' },
+    { at: 4300, target: 'smallBar', caption: '<b>Click again</b> — back to one quiet line' },
+    { at: 5900, target: 'prs', caption: '<b>PRs</b> — every session in the project, grouped by what it needs' },
+    { at: 9000, target: 'title145', caption: '<b>Click a session</b> — its worktree, branch, PR and activity' },
+    { at: 12000, target: 'askOne', caption: '<b>Ask here</b> — Claude reads that session’s transcript; the session is not interrupted' },
+    { at: 16200, target: 'askAll', caption: '<b>Ask 2 working</b> — one click for everything in flight' },
+    { at: 20400, target: 'doneHeading', caption: '<b>Done</b> — folded until you want it' },
+  ]
+  var TOTAL = 23500
+  var MOVE = 800
+
+  var ease = function (p) { return p < 0 ? 0 : p > 1 ? 1 : p * p * (3 - 2 * p) }
+  var prog = function (t, start, dur) { return ease((t - start) / dur) }
+  var centre = function (id) {
+    var r = $(id).getBoundingClientRect(), s = $('stage').getBoundingClientRect()
+    return { x: r.left - s.left + Math.min(r.width / 2, 60), y: r.top - s.top + r.height / 2 }
+  }
+  var reveal = function (id, p) {
+    var el = $(id)
+    el.style.height = p >= 1 ? 'auto' : Math.round(p * el.firstElementChild.offsetHeight) + 'px'
+    el.style.opacity = p
+  }
+
+  window.TOTAL = TOTAL
+  window.setT = function (t) {
+    // State, each a 0..1 progress from its click.
+    var cardOpen = prog(t, STEPS[0].at, 320) - prog(t, STEPS[1].at, 320)
+    var paneOpen = prog(t, STEPS[2].at, 420)
+    var rowOpen = prog(t, STEPS[3].at, 320)
+    var doneOpen = prog(t, STEPS[6].at, 320)
+
+    $('breakdownWrap').style.height = Math.round(cardOpen * $('breakdownInner').offsetHeight) + 'px'
+    $('breakdownWrap').style.opacity = cardOpen
+    $('paneWrap').style.width = Math.round(paneOpen * 400) + 'px'
+    reveal('details', rowOpen)
+    $('title145').style.fontWeight = rowOpen > 0.5 ? 650 : 400
+    reveal('done', doneOpen)
+    $('doneLabel').style.fontWeight = doneOpen > 0.5 ? 650 : 400
+    $('doneLabel').style.color = doneOpen > 0.5 ? 'var(--text)' : 'var(--dim)'
+    reveal('ask1', prog(t, STEPS[4].at + 250, 450))
+    reveal('ask2', prog(t, STEPS[5].at + 250, 450))
+    $('live').textContent = t >= STEPS[4].at ? 'asked ' + Math.max(1, Math.floor((t - (t >= STEPS[5].at ? STEPS[5].at : STEPS[4].at)) / 1000)) + 's ago' : 'live · 4s'
+
+    // The pointer travels to each target during the MOVE before its click, and rests there in between.
+    var from = { x: 520, y: 300 }
+    for (var i = 0; i < STEPS.length; i++) {
+      var to = centre(STEPS[i].target)
+      var p = prog(t, STEPS[i].at - MOVE - 120, MOVE)
+      from = { x: from.x + (to.x - from.x) * p, y: from.y + (to.y - from.y) * p }
+    }
+    $('cursor').style.transform = 'translate(' + (from.x - 3) + 'px,' + (from.y - 2) + 'px)'
+
+    var ring = $('ring'), ringOn = 0
+    STEPS.forEach(function (step) {
+      var q = (t - step.at) / 420
+      if (q >= 0 && q <= 1) {
+        ringOn = 1
+        ring.style.transform = 'translate(' + from.x + 'px,' + from.y + 'px) scale(' + (0.35 + 0.65 * q) + ')'
+        ring.style.opacity = 0.9 * (1 - q)
+      }
+    })
+    if (!ringOn) ring.style.opacity = 0
+
+    // One caption at a time, shown from just before its click until the next one takes over.
+    var caption = ''
+    var opacity = 0
+    STEPS.forEach(function (step, index) {
+      var start = step.at - MOVE
+      var end = index + 1 < STEPS.length ? STEPS[index + 1].at - MOVE : TOTAL
+      if (t >= start && t < end) {
+        caption = step.caption
+        opacity = Math.min(prog(t, start, 250), 1 - prog(t, end - 250, 250))
+      }
+    })
+    $('caption').innerHTML = caption
+    $('caption').style.opacity = opacity
+    $('progress').style.width = Math.round((t / TOTAL) * 1120) + 'px'
+  }
+
+  if (params.has('t')) {
+    window.setT(Number(params.get('t')))
+  } else {
+    var start = performance.now()
+    var tick = function (now) {
+      window.setT((now - start) % TOTAL)
+      requestAnimationFrame(tick)
+    }
+    requestAnimationFrame(tick)
+  }
+})()
+</script>
+</body>
+</html>

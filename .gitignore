@@ -1,0 +1,5 @@
+.DS_Store
+node_modules/
+docs/demo/frames/
+# Written by /plugin-types: this build's copy of the Claude Code API declarations.
+**/.claude-plugin/types/
