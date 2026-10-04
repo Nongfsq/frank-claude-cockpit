@@ -125,7 +125,6 @@ test('shows the usage another session fetched, and asks the account once when it
     triedAt: NOW - 30_000,
     retryAt: 0,
     limits: [{ kind: 'seven_day', percentUsed: 42, resetsAt: '2026-10-06T03:30:00Z' }],
-    ttlMs: 3_600_000,
   })
   let fetches = 0
   let clockNow = NOW
@@ -189,4 +188,75 @@ test('shows the usage another session fetched, and asks the account once when it
   expect(fetches).toBe(1)
   expect(JSON.parse(file).limits[0].percentUsed).toBe(55)
   await later.unmount()
+})
+
+test('takes the cache lifetime from what the session recorded', async ($, on) => {
+  const written = (lifetime: '5m' | '1h') =>
+    JSON.stringify({ message: { usage: { cache_creation: { [`ephemeral_${lifetime}_input_tokens`]: 1_200 } } } })
+  // The tail starts mid-line, and the newest response only read the cache.
+  let record = ['"cut": true}', written('5m'), JSON.stringify({ message: { usage: { cache_creation: {} } } })].join('\n')
+  let clockNow = Date.parse('2026-10-03T00:30:00Z')
+
+  on('session.usage', () => ({
+    value: {
+      startedAt: 0,
+      context: {
+        window: 1_000_000,
+        tokens: 145_000,
+        percent: 14,
+        breakdown: {
+          categories: [category('Messages', 145_000, 'purple_FOR_SUBAGENTS_ONLY'), category('Free space', 855_000, 'promptBorder', 'free')],
+          totalTokens: 145_000,
+          maxTokens: 1_000_000,
+          rawMaxTokens: 1_000_000,
+          autocompactSource: 'model',
+          percentage: 14,
+          gridRows: [],
+          model: 'claude-opus-5-5',
+          memoryFiles: [],
+          mcpTools: [],
+          agents: [],
+          autoCompactThreshold: 970_000,
+          isAutoCompactEnabled: true,
+          apiUsage: null,
+        },
+      },
+      rateLimits: [],
+    },
+  }))
+  on('session.authorize', () => ({ value: null }))
+  on('process.run', ($, e) => {
+    expect(e.argv.at(-1)).toBe('/home/me/atlas.jsonl')
+
+    return { value: { exitCode: 0, stdout: record, stderr: '', isStdoutTruncated: false, isStderrTruncated: false } }
+  })
+  on('clock.now', () => ({ value: clockNow }))
+  on('clock.every', () => ({ value: undefined }))
+  on('session.start', ($, e) => ({ cwd: e.cwd }))
+  on('session.measure', ($, e) => ({ changed: e.changed }))
+  on('command.list', () => ({ value: [] }))
+  on('classic.Stop', () => ({}))
+
+  await $.session.start({ cwd: '/', surface: 'desktop', isInteractive: true })
+  await $.session.measure({ context: { window: 1_000_000, tokens: 145_000, percent: 14 }, rateLimits: [], changed: ['context'] })
+  await $.classic.Stop({ stop_hook_active: false, transcript_path: '/home/me/atlas.jsonl' })
+
+  // Written for five minutes: three minutes on it is past half, and after six it is cold.
+  clockNow += 3 * 60_000
+  const half = await $.ui.mount({ ...BAND, surface: 'desktop' })
+  expect(await half.find({ text: /^◐$/ })).toBeDefined()
+  await half.unmount()
+  clockNow += 3 * 60_000
+  const cold = await $.ui.mount({ ...BAND, surface: 'desktop' })
+  expect(await cold.find({ text: /^○$/ })).toBeDefined()
+  await cold.unmount()
+
+  // The next turn wrote for an hour: six minutes after it the cache is still fresh.
+  record = written('1h')
+  await $.session.measure({ context: { window: 1_000_000, tokens: 150_000, percent: 15 }, rateLimits: [], changed: ['context'] })
+  await $.classic.Stop({ stop_hook_active: false, transcript_path: '/home/me/atlas.jsonl' })
+  clockNow += 6 * 60_000
+  const fresh = await $.ui.mount({ ...BAND, surface: 'desktop' })
+  expect(await fresh.find({ text: /^●$/ })).toBeDefined()
+  await fresh.unmount()
 })

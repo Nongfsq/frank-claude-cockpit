@@ -18,13 +18,52 @@ const isOpen = atom({ plugin: 'context-card', key: 'isOpen' } as const, false)
 const LOCAL_MS = 15_000
 const HOUR = 3_600_000
 
-// The prompt cache: when the last response came back, and how long the cache lives (an hour on a plan,
-// five minutes once usage credits are being drawn).
+const FIVE_MINUTES = 300_000
+const TAIL_BYTES = 400_000
+
+// The prompt cache: when the last response came back, and how long the cache lives. An hour until the
+// session's own record says otherwise: five minutes with an API key or once usage credits are being drawn.
 const cache = atom({ plugin: 'context-card', key: 'cache' } as const, { lastReplyAt: 0, ttlMs: HOUR })
 
 const markReply = async ($: EngineInterface) => {
   const now = await $.clock.now()
   await update($, cache, was => ({ ...was, lastReplyAt: now }))
+}
+
+// Each response is recorded with what it wrote to the cache at each lifetime; the newest one that wrote any
+// tells which lifetime this session's cache has. Null when the end of the record names neither.
+const writtenTtl = (tail: string) => {
+  for (const line of tail.split('\n').reverse()) {
+    try {
+      const wrote = (JSON.parse(line) as { message?: { usage?: { cache_creation?: Record<string, unknown> } } }).message?.usage
+        ?.cache_creation
+
+      if (Number(wrote?.ephemeral_1h_input_tokens) > 0) {
+        return HOUR
+      }
+
+      if (Number(wrote?.ephemeral_5m_input_tokens) > 0) {
+        return FIVE_MINUTES
+      }
+    } catch {
+      // The first line is cut where the tail starts, and not every line is a response.
+    }
+  }
+
+  return null
+}
+
+const measureTtl = async ($: EngineInterface, transcriptPath: string) => {
+  if (transcriptPath === '') {
+    return
+  }
+
+  const tail = await $.process.run(['tail', '-c', String(TAIL_BYTES), transcriptPath]).catch(() => null)
+  const ttlMs = tail === null || tail.exitCode !== 0 ? null : writtenTtl(tail.stdout)
+
+  if (ttlMs !== null) {
+    await update($, cache, was => ({ ...was, ttlMs }))
+  }
 }
 
 // Full while the cache is fresh, half once most of its life is gone, an empty ring once it has expired. Only
@@ -103,7 +142,7 @@ let hasLive = false
 
 // What the last usage request found, kept in one file every session reads, so the account is asked once
 // for all of them and they all show the same figure.
-type Shared = { at: number; triedAt: number; retryAt: number; limits: Limit[]; ttlMs: number }
+type Shared = { at: number; triedAt: number; retryAt: number; limits: Limit[] }
 
 const SHARE_MS = 120_000
 const BACKOFF_MS = 300_000
@@ -128,7 +167,6 @@ const readShared = async ($: EngineInterface, path: string | null): Promise<Shar
       triedAt: Number(found.triedAt) || 0,
       retryAt: Number(found.retryAt) || 0,
       limits: Array.isArray(found.limits) ? found.limits : [],
-      ttlMs: Number(found.ttlMs) || HOUR,
     }
   } catch {
     return null
@@ -148,7 +186,6 @@ const show = async ($: EngineInterface, shared: Shared) => {
 
   hasLive = true
   await update($, card, was => (was === null ? was : { ...was, limits: shared.limits }))
-  await update($, cache, was => ({ ...was, ttlMs: shared.ttlMs }))
 }
 
 // Account-wide plan usage, as the app's usage card reads it; covers every session, not just this one.
@@ -156,7 +193,7 @@ const show = async ($: EngineInterface, shared: Shared) => {
 const poll = async ($: EngineInterface) => {
   const path = await sharedPath($)
   const now = await $.clock.now()
-  const shared = (await readShared($, path)) ?? { at: 0, triedAt: 0, retryAt: 0, limits: [], ttlMs: HOUR }
+  const shared = (await readShared($, path)) ?? { at: 0, triedAt: 0, retryAt: 0, limits: [] }
 
   await show($, shared)
 
@@ -197,10 +234,7 @@ const poll = async ($: EngineInterface) => {
     return
   }
 
-  // Past a plan limit with usage credits on, requests draw on credits and the cache drops to five minutes.
-  const extra = body.extra_usage as { is_enabled?: unknown } | null
-  const isDrawingCredits = extra?.is_enabled === true && limits.some(limit => limit.percentUsed >= 100)
-  const next: Shared = { at: now, triedAt: now, retryAt: 0, limits, ttlMs: isDrawingCredits ? 300_000 : HOUR }
+  const next: Shared = { at: now, triedAt: now, retryAt: 0, limits }
 
   await writeShared($, path, next)
   await show($, next)
@@ -287,6 +321,19 @@ export const register: Register = on => {
       await refresh($)
       await poll($).catch(() => {})
     }
+
+    return next(e)
+  })
+
+  // A resumed session's record already says which lifetime it has; after that, each finished turn's does.
+  on('classic.SessionStart', async ($, e, next) => {
+    await measureTtl($, e.transcript_path)
+
+    return next(e)
+  })
+
+  on('classic.Stop', async ($, e, next) => {
+    await measureTtl($, e.transcript_path)
 
     return next(e)
   })
