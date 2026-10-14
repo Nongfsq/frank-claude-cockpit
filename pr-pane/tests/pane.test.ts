@@ -188,3 +188,56 @@ test('a group with no other session shows an empty board, not an error', async (
   expect(await ui.find({ text: /Session list unavailable/ })).toBeUndefined()
   await ui.unmount()
 })
+
+// The same folder as the desktop app reports it on Windows.
+const win = (path: string) => `C:${path.replace(/\//g, '\\')}`
+
+test('on Windows, reads backslashed session folders against git paths', async ($, on) => {
+  const loner = { ...ME, cwd: win(ME.cwd), group: null }
+  on('mcp.call', ($, e) => (e.tool === 'get_session' ? text(loner) : text(SESSIONS.map(s => ({ ...s, cwd: win(s.cwd), group: null })))))
+  on('process.run', ($, e) => {
+    const argv = e.argv.join(' ')
+    if (argv.includes('--git-common-dir')) return reply('C:/repo/.git')
+    if (argv.includes('pr list')) return reply('[]')
+    if (argv.includes('worktree list')) return reply(WORKTREES.replace(/worktree \//g, 'worktree C:/'))
+    if (argv.includes('status')) return reply('')
+    return reply('', 1)
+  })
+  on('clock.now', () => ({ value: NOW }))
+  on('clock.every', () => ({ value: undefined }))
+  on('command.register', ($, e) => ({ value: { command: e.name } }))
+  on('session.start', ($, e) => ({ cwd: e.cwd }))
+
+  await $.session.start({ cwd: loner.cwd, surface: 'desktop', isInteractive: true })
+
+  const ui = await $.ui.mount({ ...PANE, surface: 'desktop' })
+  expect(await ui.find({ text: /^repo$/ })).toBeDefined()
+  expect(await ui.find({ text: /^TASK-186$/ })).toBeDefined()
+  // Only the worktree no session holds is loose.
+  await ui.press({ key: 'section-loose' })
+  expect(await ui.find({ text: /^old$/ })).toBeDefined()
+  expect(await ui.find({ text: /^cranky$/ })).toBeUndefined()
+  await ui.press({ key: 'title-local_b' })
+  expect(await ui.find({ text: /^brave$/ })).toBeDefined()
+  await ui.unmount()
+})
+
+test('on Windows, the overview names each project by its folder, not its whole path', async ($, on) => {
+  const loner = { ...ME, cwd: win('/Users/me/scratch'), group: null }
+  on('mcp.call', ($, e) =>
+    e.tool === 'get_session' ? text(loner) : text(SESSIONS.map(s => ({ ...s, cwd: win(`/work/harbor${s.cwd.slice('/repo'.length)}`), group: null }))),
+  )
+  on('process.run', () => reply('', 128))
+  on('clock.now', () => ({ value: NOW }))
+  on('clock.every', () => ({ value: undefined }))
+  on('command.register', ($, e) => ({ value: { command: e.name } }))
+  on('session.start', ($, e) => ({ cwd: e.cwd }))
+
+  await $.session.start({ cwd: loner.cwd, surface: 'desktop', isInteractive: true })
+
+  const ui = await $.ui.mount({ ...PANE, surface: 'desktop' })
+  expect(await ui.find({ text: /^All projects$/ })).toBeDefined()
+  expect(await ui.find({ text: /^harbor$/ })).toBeDefined()
+  expect(await ui.find({ text: /C:\\/ })).toBeUndefined()
+  await ui.unmount()
+})

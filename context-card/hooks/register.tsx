@@ -58,7 +58,8 @@ const measureTtl = async ($: EngineInterface, transcriptPath: string) => {
     return
   }
 
-  const tail = await $.process.run(['tail', '-c', String(TAIL_BYTES), transcriptPath]).catch(() => null)
+  // `-cN` attached: GnuWin32's tail 5.3 reads a separate count as a file name.
+  const tail = await $.process.run(['tail', `-c${TAIL_BYTES}`, transcriptPath]).catch(() => null)
   const ttlMs = tail === null || tail.exitCode !== 0 ? null : writtenTtl(tail.stdout)
 
   if (ttlMs !== null) {
@@ -167,7 +168,8 @@ const showLimits = async ($: EngineInterface) => {
 }
 
 const sharedPath = async ($: EngineInterface) => {
-  const home = await $.env.get('HOME').catch(() => undefined)
+  // Windows has no HOME by default; USERPROFILE is its equivalent.
+  const home = (await $.env.get('HOME').catch(() => undefined)) || (await $.env.get('USERPROFILE').catch(() => undefined))
 
   return typeof home === 'string' && home !== '' ? `${home}/.claude/cache/context-card-usage.json` : null
 }

@@ -101,6 +101,8 @@ const ago = (ms: number) => {
 
 const cut = (text: string, max: number) => (text.length > max ? `${text.slice(0, Math.max(1, max - 1))}…` : text)
 const basename = (path: string) => path.replace(/\/+$/, '').split('/').pop() ?? path
+// Sessions report Windows folders with backslashes, git with forward slashes; compare and cut them in one form.
+const slash = (path: string) => path.replace(/\\/g, '/')
 
 const mcpJson = async ($: EngineInterface, tool: string, args: Record<string, unknown>) => {
   const result = await $.mcp.call(SERVER, tool, args)
@@ -190,9 +192,13 @@ const refresh = async ($: EngineInterface, force = false) => {
   await update($, isLoading, () => true)
 
   try {
-    const me = (await mcpJson($, 'get_session', { session_id: 'self' })) as Session
+    const self = (await mcpJson($, 'get_session', { session_id: 'self' })) as Session
+    const me = { ...self, cwd: slash(self.cwd) }
     const group = me.group ?? null
-    const listed = (await mcpJson($, 'list_sessions', group === null ? { limit: 50 } : { group: group.id, limit: 50 })) as Session[]
+    const listed = ((await mcpJson($, 'list_sessions', group === null ? { limit: 50 } : { group: group.id, limit: 50 })) as Session[]).map(s => ({
+      ...s,
+      cwd: slash(s.cwd),
+    }))
     const common = await run($, ['git', 'rev-parse', '--path-format=absolute', '--git-common-dir'], me.cwd)
     const root = common.ok ? common.out.replace(/\/\.git$/, '') : ''
     // Outside any project (no group, no repo) the pane is an overview of every project's sessions.
