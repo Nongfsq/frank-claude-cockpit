@@ -4,7 +4,7 @@ Two mods for [Claude Code](https://claude.com/claude-code) for people who run ma
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="docs/demo-dark.gif">
-  <img src="docs/demo-light.gif" alt="A walkthrough: click the bar to see the context breakdown, click PRs to open the sessions pane, open a session, ask about it, ask about everything in flight, unfold the done ones.">
+  <img src="docs/demo-light.gif" alt="A walkthrough: click the bar to see the context breakdown, click PRs to open the sessions pane, open a session, ask about it, ask about everything in flight, ask about the done ones while Claude is still replying, unfold them.">
 </picture>
 
 Unofficial. Not affiliated with Anthropic.
@@ -41,7 +41,7 @@ Every session in the same sidebar group, sorted by what it needs from you:
 | --- | --- |
 | **Needs you** | CI failing, conflicts, changes requested, ready to merge, or idle with nothing to show. |
 | **Working** | Sessions running right now. |
-| **Done** | Merged or closed. Folded until you click the heading. |
+| **Done** | Merged or closed. Folded until you click the heading; its **Ask** works either way. |
 | **Loose worktrees** | Worktrees no session holds, and whether they have uncommitted changes. |
 
 Each row has one time, on the right: how long it has been in the state its status names (`working` for 47m, `merged` 2h ago).
@@ -50,10 +50,13 @@ Each row has one time, on the right: how long it has been in the state its statu
 | --- | --- |
 | Click a session | Shows its worktree, branch, PR and activity. |
 | **Ask here** | Asks, in the session you are in, for that session's status. Claude reads the other session's transcript and checks its PR; the other session is not messaged or interrupted. |
-| **Ask N working** | The same, for every session that is running. |
+| **Ask N working** | The same, for every session that is running; with none running, **Ask N open** asks about every unfinished one. |
+| **Ask** on the Done heading | Asks what the finished sessions changed, how they ended, and what they left to follow up. |
 | `#45`, `PR ↗` | Opens the pull request on GitHub. |
 | `↻` | Refreshes now. The pane also refreshes itself every 15 seconds. |
 | A section heading | Folds or unfolds the section. |
+
+An Ask pressed while Claude is still replying in your session waits on a line under the header, `After this turn: ask about …`, with **Cancel**, and is sent when the reply ends. One waits at a time: pressing Ask again replaces it.
 
 Outside any project, the pane shows every project's sessions as one overview.
 
@@ -86,7 +89,7 @@ Install both: the `PRs` button lives in `context-card` and appears only when `pr
 
 - `context-card` asks `api.anthropic.com` for your own plan usage with the login Claude Code already holds, at most once every two minutes however many sessions are open: one session asks and the rest read its answer from `~/.claude/cache/context-card-usage.json`. That request uses no tokens.
 - `pr-pane` runs `git` and `gh` locally, in the project's folder.
-- **Ask here** sends one prompt in your current session, so it costs what a prompt costs there.
+- Each **Ask** sends one prompt in your current session, so it costs what a prompt costs there.
 
 Nothing else is sent anywhere.
 
@@ -100,12 +103,17 @@ claude plugin test pr-pane
 
 Types for an editor: run `/plugin-types` inside a mod's folder.
 
-The demo above is a scripted page, [`docs/demo/index.html`](docs/demo/index.html); open it in a browser to watch it loop, or add `?theme=light`. To re-record it:
+The demo above is a scripted page, [`docs/demo/index.html`](docs/demo/index.html); open it in a browser to watch it loop, or add `?theme=light`. To re-record it, both themes, as GIF and MP4, with the sessions screenshot cropped from the last frame:
 
 ```bash
 cd docs/demo && npm i puppeteer-core
-node record.mjs frames dark 15
-ffmpeg -framerate 15 -i frames/f%04d.png -vf "scale=1200:-1:flags=lanczos,split[a][b];[a]palettegen=max_colors=128:stats_mode=diff[p];[b][p]paletteuse=dither=bayer:bayer_scale=5:diff_mode=rectangle" ../demo-dark.gif
+for theme in dark light; do
+  rm -rf frames && node record.mjs frames $theme 15
+  ffmpeg -y -framerate 15 -i frames/f%04d.png -vf "scale=1200:-1:flags=lanczos,split[a][b];[a]palettegen=max_colors=128:stats_mode=diff[p];[b][p]paletteuse=dither=bayer:bayer_scale=5:diff_mode=rectangle" ../demo-$theme.gif
+  ffmpeg -y -framerate 15 -i frames/f%04d.png -vf "scale=1800:-2:flags=lanczos" -c:v libx264 -pix_fmt yuv420p -crf 23 -movflags +faststart ../demo-$theme.mp4
+  ffmpeg -y -i frames/$(ls frames | tail -1) -vf "crop=2280:1240:60:36" ../sessions-$theme.png
+done
+rm -rf frames
 ```
 
 ## Support
