@@ -57,6 +57,9 @@ test('groups the sessions by what they need, and asks about them in this session
     isOpen = false
     return { value: undefined }
   })
+  on('ui.toast', () => ({ value: undefined }))
+  on('turn.start', ($, e) => ({ turnId: e.turnId }))
+  on('turn.complete', ($, e) => ({ text: e.answer }))
   on('session.receive', ($, e) => ({ text: e.text }))
   on('session.start', ($, e) => ({ cwd: e.cwd }))
 
@@ -76,6 +79,15 @@ test('groups the sessions by what they need, and asks about them in this session
     await ui.unmount()
   }
 
+  // A narrow pane drops the freshness note rather than wrapping it beside a cut name.
+  const narrow = await $.ui.mount({ ...PANE, surface: 'desktop', props: { ...PANE.props, bodyColumns: 30 } })
+  expect(await narrow.find({ text: /^Atlas$/ })).toBeDefined()
+  expect(await narrow.find({ text: /^live · / })).toBeUndefined()
+  await narrow.unmount()
+  const wide = await $.ui.mount({ ...PANE, surface: 'desktop' })
+  expect(await wide.find({ text: /^live · / })).toBeDefined()
+  await wide.unmount()
+
   const ui = await $.ui.mount({ ...PANE, surface: 'desktop' })
   await ui.press({ key: 'title-local_b' })
   expect(await ui.find({ text: /^brave$/ })).toBeDefined()
@@ -91,6 +103,30 @@ test('groups the sessions by what they need, and asks about them in this session
   expect(sent).toHaveLength(2)
   expect(sent[1]).toContain('local_b')
   expect(await ui.find({ text: /^\?$/ })).toBeUndefined()
+
+  // The Done heading asks what the finished sessions left behind, folded or not.
+  await ui.press({ key: 'ask-done' })
+  expect(sent).toHaveLength(3)
+  expect(sent[2]).toContain('local_c')
+  expect(sent[2]).not.toContain('local_a')
+  expect(sent[2]).toContain('the outcome')
+
+  // Pressed while this session's own turn runs, an ask waits in the pane, in view: pressing again replaces it
+  // rather than stacking a second, Cancel drops it, and the turn's end sends it.
+  await $.turn.start({ text: 'busy', turnId: 't1' })
+  await ui.press({ key: 'checkin' })
+  await ui.press({ key: 'checkin' })
+  expect(sent).toHaveLength(3)
+  expect(await ui.find({ text: /^After this turn: ask about / })).toBeDefined()
+  await ui.press({ key: 'cancel-ask' })
+  expect(await ui.find({ text: /^After this turn: ask about / })).toBeUndefined()
+  await ui.press({ key: 'ask-done' })
+  await $.turn.complete({ turnId: 't1', answer: '', durationMs: 1, isAborted: false, reason: 'answer' })
+  // Sent after the hook returns, as the engine takes a plugin's prompt only once the turn has ended.
+  for (let tries = 0; tries < 100 && sent.length < 4; tries++) await new Promise(resolve => setTimeout(resolve, 5))
+  expect(sent).toHaveLength(4)
+  expect(sent[3]).toContain('the outcome')
+  expect(await ui.find({ text: /^After this turn: ask about / })).toBeUndefined()
 
   await $.session.receive({ origin: { kind: 'peer' }, text: '[status local_b] Done. PR #34 is green and approved.' })
   expect(await ui.find({ text: /^Done\. PR #34 is green and approved\.$/ })).toBeDefined()

@@ -20,6 +20,7 @@ const expanded = atom({ plugin: 'pr-pane', key: 'expanded' } as const, [])
 // When each running session was first seen running, so a row can say how long its current run has lasted.
 const runs = atom({ plugin: 'pr-pane', key: 'runs' } as const, {})
 const openSections = atom({ plugin: 'pr-pane', key: 'openSections' } as const, ['needs', 'working'])
+const queuedAsk = atom({ plugin: 'pr-pane', key: 'queuedAsk' } as const, null)
 
 // Theme keys, so both themes stay legible. Color means attention; merged gets the theme's own merged hue.
 const TONES: Record<Kind, string | undefined> = {
@@ -247,6 +248,13 @@ const refresh = async ($: EngineInterface, force = false) => {
   }
 }
 
+const isDone = (row: Row) => row.kind === 'merged' || row.kind === 'closed'
+
+// Whether this session's own turn is running, set by the turn hooks below. The engine holds a plugin's prompt
+// until the turn ends and shows nothing meanwhile, so an Ask pressed then is held in the pane instead, in view
+// and cancellable, one at a time, and sent when the turn ends.
+let isTurnRunning = false
+
 // Asks about other sessions in this one: the prompt lands in this session's own chat, and Claude reads their
 // transcripts to answer, so the sessions asked about are not interrupted.
 const askHere = async ($: EngineInterface, rows: Row[]) => {
@@ -255,22 +263,45 @@ const askHere = async ($: EngineInterface, rows: Row[]) => {
   }
 
   const list = rows.map(row => `- "${row.tag === '' ? row.name : `${row.tag} ${row.name}`}" (session ${row.id}${row.pr > 0 ? `, PR #${row.pr}` : ''})`)
+  // Finished sessions have no progress to report: the question about them is what they left behind.
+  const isFinished = rows.every(isDone)
   const text =
-    `Report the status of ${rows.length === 1 ? 'this session' : 'these sessions'} without messaging ${rows.length === 1 ? 'it' : 'them'}: ` +
-    `read each one's recent transcript with the ccd_session_mgmt list_events tool, and check its PR and CI if it has one.\n` +
+    `Report ${isFinished ? 'the outcome' : 'the status'} of ${rows.length === 1 ? 'this session' : 'these sessions'} without messaging ${rows.length === 1 ? 'it' : 'them'}: ` +
+    `read each one's recent transcript with the ccd_session_mgmt list_events tool, and check its PR${isFinished ? '' : ' and CI'} if it has one.\n` +
     `${list.join('\n')}\n` +
-    `For each, in one or two lines: what it is doing now, how far along it is, any blocker, and whether it is ready to merge.`
+    (isFinished
+      ? `For each, in one or two lines: what it changed, how it ended (merged or closed), and anything it left to follow up.`
+      : `For each, in one or two lines: what it is doing now, how far along it is, any blocker, and whether it is ready to merge.`)
 
-  await $.prompt.submit({ text, asUser: true })
+  const label = rows.length === 1 ? rows[0]!.name : `${rows.length} sessions`
+
+  if (isTurnRunning) {
+    await update($, queuedAsk, () => ({ text, label }))
+
+    return
+  }
+
+  await send($, text)
+}
+
+const send = async ($: EngineInterface, text: string) => {
   const now = await $.clock.now()
   await update($, checkedAt, () => now)
+
+  try {
+    const sent = await $.prompt.submit({ text, asUser: true })
+
+    if (sent.drop !== undefined) $.ui.toast(`Ask was not sent: ${sent.drop}`)
+  } catch (cause) {
+    $.ui.toast(`Ask failed: ${cause instanceof Error ? cause.message : String(cause)}`)
+  }
 }
 
 // The sessions worth asking about: the ones working now, or failing that the unfinished idle ones.
 const askable = (rows: Row[]) => {
   const working = rows.filter(row => row.kind === 'working')
 
-  return working.length > 0 ? working : rows.filter(row => row.kind !== 'merged' && row.kind !== 'closed')
+  return working.length > 0 ? working : rows.filter(row => !isDone(row))
 }
 
 const checkIn = async ($: EngineInterface) => {
@@ -333,9 +364,22 @@ export const register: Register = on => {
     return next(e)
   })
 
+  on('turn.start', ($, e, next) => {
+    isTurnRunning = true
+
+    return next(e)
+  })
+
   on('turn.complete', async ($, e, next) => {
     if (e.agentId === undefined) {
+      isTurnRunning = false
       void refresh($)
+      const held = await read($, queuedAsk)
+
+      if (held !== null) {
+        await update($, queuedAsk, () => null)
+        void send($, held.text)
+      }
     }
 
     return next(e)
@@ -384,6 +428,7 @@ export const register: Register = on => {
     const asked = await read($, checkedAt)
     const open: string[] = await read($, expanded)
     const sections: string[] = await read($, openSections)
+    const held = await read($, queuedAsk)
     const columns = e.props.bodyColumns ?? 60
     const isNarrow = columns < 44
     const isDesktop = e.surface === 'desktop'
@@ -418,7 +463,7 @@ export const register: Register = on => {
 
     const needs = data.rows.filter(row => NEEDS.includes(row.kind)).sort((a, b) => NEEDS.indexOf(a.kind) - NEEDS.indexOf(b.kind))
     const working = data.rows.filter(row => row.kind === 'working')
-    const done = data.rows.filter(row => row.kind === 'merged' || row.kind === 'closed').slice(0, DONE_LIMIT)
+    const done = data.rows.filter(isDone).slice(0, DONE_LIMIT)
     const targets = askable(data.rows)
     const targetLabel = `${targets.length} ${targets.some(row => row.kind === 'working') ? 'working' : 'open'}`
 
@@ -503,27 +548,36 @@ export const register: Register = on => {
     }
 
     // A section's heading is its own switch: bold while open, dim while folded, and no arrow.
-    const section = (id: string, label: string, n: number, body: () => unknown) => {
+    // `ask` puts a control at the end of the heading, outside the heading's own switch so each presses alone.
+    const section = (id: string, label: string, n: number, body: () => unknown, ask?: () => void) => {
       const isOpen = sections.includes(id)
       const toggle = () => void toggleSection($, id)
 
       return n === 0 ? null : (
         <Box key={`section-${id}`} flexDirection="column" marginTop={1}>
-          <Box key={`heading-${id}`} flexDirection="row" columnGap={1} position="relative">
-            {isDesktop ? (
-              <Text bold={isOpen} dimColor={!isOpen}>
-                {label}
-              </Text>
-            ) : (
-              <Button key={`section-${id}`} plain label={isOpen ? label : `${label} …`} onPress={toggle} />
-            )}
-            <Text dimColor>{n}</Text>
-            {isDesktop ? cover(`section-${id}`, toggle) : null}
+          <Box flexDirection="row" columnGap={2}>
+            <Box key={`heading-${id}`} flexDirection="row" columnGap={1} flexGrow={1} position="relative">
+              {isDesktop ? (
+                <Text bold={isOpen} dimColor={!isOpen}>
+                  {label}
+                </Text>
+              ) : (
+                <Button key={`section-${id}`} plain label={isOpen ? label : `${label} …`} onPress={toggle} />
+              )}
+              <Text dimColor>{n}</Text>
+              {isDesktop ? cover(`section-${id}`, toggle) : null}
+            </Box>
+            {ask === undefined ? null : <Button key={`ask-${id}`} plain label="Ask" onPress={ask} />}
           </Box>
           {isOpen ? body() : null}
         </Box>
       )
     }
+
+    // The freshness note gives way first in a narrow pane: squeezed, it wrapped onto two lines beside a cut name.
+    // Cells left after the padding, the whole group name, the Ask button with its frame, ↻ and the gaps.
+    const freshness = asked > 0 ? `asked ${ago(now - asked)} ago` : `live · ${ago(now - data.at)}`
+    const freshnessRoom = columns - 2 - data.group.length - (targets.length === 0 ? 0 : `Ask ${targetLabel}`.length + 6) - 3 - 2
 
     return (
       <Box flexDirection="column" paddingX={1}>
@@ -531,13 +585,21 @@ export const register: Register = on => {
           <Text bold wrap="truncate-end">
             {data.group}
           </Text>
-          <Text dimColor>{asked > 0 ? `asked ${ago(now - asked)} ago` : `live · ${ago(now - data.at)}`}</Text>
+          {freshness.length <= freshnessRoom ? <Text dimColor>{freshness}</Text> : null}
           <Box flexGrow={1} />
           {targets.length === 0 ? null : (
             <Button key="checkin" variant="secondary" {...keys('c')} label={`Ask ${targetLabel}`} onPress={() => void checkIn($)} />
           )}
           <Button key="refresh" plain {...keys('r')} label="↻" onPress={() => void refresh($, true)} />
         </Box>
+
+        {held === null ? null : (
+          <Box flexDirection="row" columnGap={2}>
+            <Text color="warning" wrap="truncate-end">{`After this turn: ask about ${held.label}`}</Text>
+            <Box flexGrow={1} />
+            <Button key="cancel-ask" plain label="Cancel" onPress={() => void update($, queuedAsk, () => null)} />
+          </Box>
+        )}
 
         {problem === null ? null : <Text color="error">{problem}</Text>}
 
@@ -548,7 +610,7 @@ export const register: Register = on => {
         ) : null}
         {section('needs', 'Needs you', needs.length, () => needs.map(sessionRow))}
         {section('working', 'Working', working.length, () => working.map(sessionRow))}
-        {section('done', 'Done', done.length, () => done.map(sessionRow))}
+        {section('done', 'Done', done.length, () => done.map(sessionRow), () => void askHere($, done))}
         {section('loose', 'Loose worktrees', data.loose.length, () =>
           data.loose.map(tree => (
             <Box key={`loose-${tree.path}`} flexDirection="row" columnGap={2} paddingLeft={MARK}>
