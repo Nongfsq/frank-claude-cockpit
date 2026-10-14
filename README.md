@@ -108,6 +108,12 @@ node record.mjs frames dark 15
 ffmpeg -framerate 15 -i frames/f%04d.png -vf "scale=1200:-1:flags=lanczos,split[a][b];[a]palettegen=max_colors=128:stats_mode=diff[p];[b][p]paletteuse=dither=bayer:bayer_scale=5:diff_mode=rectangle" ../demo-dark.gif
 ```
 
+## Support
+
+If this project is useful to you, you can buy me a coffee.
+
+<a href="https://buymeacoffee.com/frankmenger"><img src="https://cdn.buymeacoffee.com/buttons/v2/default-yellow.png" alt="Buy Me a Coffee" height="44"></a>
+
 ## License
 
 [MIT](LICENSE)
