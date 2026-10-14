@@ -193,8 +193,10 @@ test('a group with no other session shows an empty board, not an error', async (
 const win = (path: string) => `C:${path.replace(/\//g, '\\')}`
 
 test('on Windows, reads backslashed session folders against git paths', async ($, on) => {
-  const loner = { ...ME, cwd: win(ME.cwd), group: null }
-  on('mcp.call', ($, e) => (e.tool === 'get_session' ? text(loner) : text(SESSIONS.map(s => ({ ...s, cwd: win(s.cwd), group: null })))))
+  // The app may spell the drive in lower case where git spells it in upper.
+  const lower = (path: string) => win(path).replace(/^C:/, 'c:')
+  const loner = { ...ME, cwd: lower(ME.cwd), group: null }
+  on('mcp.call', ($, e) => (e.tool === 'get_session' ? text(loner) : text(SESSIONS.map(s => ({ ...s, cwd: lower(s.cwd), group: null })))))
   on('process.run', ($, e) => {
     const argv = e.argv.join(' ')
     if (argv.includes('--git-common-dir')) return reply('C:/repo/.git')

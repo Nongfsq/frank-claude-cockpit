@@ -101,8 +101,9 @@ const ago = (ms: number) => {
 
 const cut = (text: string, max: number) => (text.length > max ? `${text.slice(0, Math.max(1, max - 1))}…` : text)
 const basename = (path: string) => path.replace(/\/+$/, '').split('/').pop() ?? path
-// Sessions report Windows folders with backslashes, git with forward slashes; compare and cut them in one form.
-const slash = (path: string) => path.replace(/\\/g, '/')
+// Sessions report Windows folders with backslashes, git with forward slashes, and the drive letter in either case;
+// every path is read in one form so they compare and cut alike.
+const slash = (path: string) => path.replace(/\\/g, '/').replace(/^[a-z]:/, drive => drive.toUpperCase())
 
 const mcpJson = async ($: EngineInterface, tool: string, args: Record<string, unknown>) => {
   const result = await $.mcp.call(SERVER, tool, args)
@@ -170,6 +171,7 @@ const looseWorktrees = async ($: EngineInterface, root: string, taken: Set<strin
     .split('\n\n')
     .filter(block => !block.includes('\nprunable'))
     .map(block => block.split('\n').find(line => line.startsWith('worktree '))?.slice(9) ?? '')
+    .map(slash)
     .filter(path => path.startsWith(`${root}/`) && !taken.has(path))
     .slice(0, 10)
 
@@ -200,7 +202,7 @@ const refresh = async ($: EngineInterface, force = false) => {
       cwd: slash(s.cwd),
     }))
     const common = await run($, ['git', 'rev-parse', '--path-format=absolute', '--git-common-dir'], me.cwd)
-    const root = common.ok ? common.out.replace(/\/\.git$/, '') : ''
+    const root = common.ok ? slash(common.out).replace(/\/\.git$/, '') : ''
     // Outside any project (no group, no repo) the pane is an overview of every project's sessions.
     const isOverview = group === null && root === ''
     const sessions = isOverview ? listed : group === null ? listed.filter(s => s.cwd.startsWith(root)) : listed
