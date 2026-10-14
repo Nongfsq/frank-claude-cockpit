@@ -36,6 +36,9 @@ export type Board = {
   at: number
 }
 
+/** An Ask pressed while this session's turn ran, held here and sent when the turn ends. */
+export type QueuedAsk = { text: string; label: string }
+
 /** A check-in's trace per session: when it was asked, and what it answered. */
 export type Report = { askedAt: number; reply: string; repliedAt: number }
 
@@ -52,6 +55,7 @@ declare module 'claude-code' {
       runs: Record<string, number>
       expanded: string[]
       openSections: string[]
+      queuedAsk: QueuedAsk | null
     }
   }
 }
