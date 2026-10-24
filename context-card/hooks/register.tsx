@@ -128,6 +128,12 @@ const resetsIn = (resetsAt: string | undefined, now: number) => {
   return minutes >= 60 ? `${Math.floor(minutes / 60)}h ${minutes % 60}m` : `${minutes}m`
 }
 
+const age = (ms: number) => {
+  const minutes = Math.max(1, Math.round(ms / 60_000))
+
+  return minutes >= 1440 ? `${Math.floor(minutes / 1440)}d` : minutes >= 60 ? `${Math.floor(minutes / 60)}h` : `${minutes}m`
+}
+
 const toLimits = (limits: SessionRateLimit[]): Limit[] =>
   limits
     .filter(({ kind }) => LIMIT_ORDER.includes(kind))
@@ -137,16 +143,28 @@ const toLimits = (limits: SessionRateLimit[]): Limit[] =>
 const USAGE_URL = 'https://api.anthropic.com/api/oauth/usage'
 const POLL_MS = 60_000
 
-// True once the account-wide figures came back; the session's own rate-limit headers then stop overriding them.
-let hasLive = false
+// The newest weekly reading any session has, kept in one file every session reads, so they all show the same
+// figure. A reading comes from a session's own API responses, free, or failing those from asking the account, once
+// for all sessions. `status` is the refusal since the account last answered, if any.
+type Shared = { at: number; triedAt: number; retryAt: number; status: number | null; limits: Limit[] }
 
-// What the last usage request found, kept in one file every session reads, so the account is asked once
-// for all of them and they all show the same figure.
-type Shared = { at: number; triedAt: number; retryAt: number; limits: Limit[] }
-
-const SHARE_MS = 120_000
+// The account is asked only when no session has brought a reading for this long: weekly moves slowly.
+const SHARE_MS = 600_000
 const BACKOFF_MS = 300_000
 const CLAIM_MS = 20_000
+// Past this the account-wide figure gives way to the session's own reading, and is drawn dim if nothing newer exists.
+const STALE_MS = 900_000
+
+const EMPTY: Shared = { at: 0, triedAt: 0, retryAt: 0, status: null, limits: [] }
+
+// The last shared file this session read or wrote.
+let lastShared: Shared = EMPTY
+
+const pickLimits = () => ({ limits: lastShared.limits, limitsAt: lastShared.at, refusedStatus: lastShared.status })
+
+const showLimits = async ($: EngineInterface) => {
+  await update($, card, was => (was === null ? was : { ...was, ...pickLimits() }))
+}
 
 const sharedPath = async ($: EngineInterface) => {
   const home = await $.env.get('HOME').catch(() => undefined)
@@ -166,6 +184,7 @@ const readShared = async ($: EngineInterface, path: string | null): Promise<Shar
       at: Number(found.at) || 0,
       triedAt: Number(found.triedAt) || 0,
       retryAt: Number(found.retryAt) || 0,
+      status: typeof found.status === 'number' ? found.status : null,
       limits: Array.isArray(found.limits) ? found.limits : [],
     }
   } catch {
@@ -174,18 +193,19 @@ const readShared = async ($: EngineInterface, path: string | null): Promise<Shar
 }
 
 const writeShared = async ($: EngineInterface, path: string | null, value: Shared) => {
+  lastShared = value
+
   if (path !== null) {
     await $.fs.write(path, JSON.stringify(value)).catch(() => undefined)
   }
 }
 
-const show = async ($: EngineInterface, shared: Shared) => {
-  if (shared.limits.length === 0) {
-    return
-  }
+// How long a refusal asks to be left alone: Retry-After in seconds or as a date, never less than the backoff.
+const waitFor = (retryAfter: string | undefined, now: number) => {
+  const seconds = Number(retryAfter)
+  const asked = Number.isFinite(seconds) && seconds > 0 ? seconds * 1000 : Date.parse(retryAfter ?? '') - now
 
-  hasLive = true
-  await update($, card, was => (was === null ? was : { ...was, limits: shared.limits }))
+  return Math.max(BACKOFF_MS, Number.isFinite(asked) ? asked : 0)
 }
 
 // Account-wide plan usage, as the app's usage card reads it; covers every session, not just this one.
@@ -193,9 +213,10 @@ const show = async ($: EngineInterface, shared: Shared) => {
 const poll = async ($: EngineInterface) => {
   const path = await sharedPath($)
   const now = await $.clock.now()
-  const shared = (await readShared($, path)) ?? { at: 0, triedAt: 0, retryAt: 0, limits: [] }
+  const shared = (await readShared($, path)) ?? lastShared
 
-  await show($, shared)
+  lastShared = shared
+  await showLimits($)
 
   // Fresh enough, told to wait after a refusal, or another session is asking right now.
   if (now - shared.at < SHARE_MS || now < shared.retryAt || now - shared.triedAt < CLAIM_MS) {
@@ -215,8 +236,15 @@ const poll = async ($: EngineInterface) => {
   })
 
   if (!response.ok) {
-    // Refused (rate limited, usually): every session waits before any of them asks again.
-    await writeShared($, path, { ...shared, triedAt: now, retryAt: now + BACKOFF_MS })
+    // Refused (rate limited, usually): every session waits as long as it was asked before any of them asks again.
+    // Read again first, so a reading another session wrote while this one waited is kept.
+    await writeShared($, path, {
+      ...((await readShared($, path)) ?? shared),
+      triedAt: now,
+      retryAt: now + waitFor(response.headers?.['retry-after'], now),
+      status: response.status,
+    })
+    await showLimits($)
 
     return
   }
@@ -234,15 +262,34 @@ const poll = async ($: EngineInterface) => {
     return
   }
 
-  const next: Shared = { at: now, triedAt: now, retryAt: 0, limits }
-
-  await writeShared($, path, next)
-  await show($, next)
+  await writeShared($, path, { at: now, triedAt: now, retryAt: 0, status: null, limits })
+  await showLimits($)
 }
 
-const refresh = async ($: EngineInterface) => {
+// Puts the windows a response just reported into the shared file, for every session to show. Only one that just
+// came back: a session's first look holds whatever its last response said, which a resumed session may have had
+// for a day, and stamping that as now would pass it off as fresh.
+const shareHeaders = async ($: EngineInterface, rateLimits: SessionRateLimit[]) => {
+  const limits = toLimits(rateLimits)
+
+  if (limits.length === 0) {
+    return
+  }
+
+  const path = await sharedPath($)
+  const now = await $.clock.now()
+  const shared = (await readShared($, path)) ?? lastShared
+
+  await writeShared($, path, { ...shared, at: now, limits })
+}
+
+const refresh = async ($: EngineInterface, afterReply = false) => {
   const { context, rateLimits } = await $.session.usage({ breakdown: 'summary' })
   const breakdown = context.breakdown
+
+  if (afterReply) {
+    await shareHeaders($, rateLimits)
+  }
 
   if (breakdown === undefined) {
     return
@@ -280,13 +327,13 @@ const refresh = async ($: EngineInterface) => {
 
   const tokens = context.tokens ?? breakdown.totalTokens
 
-  await update($, card, was => ({
+  await update($, card, () => ({
     tokens,
     window: context.window,
     percent: context.percent ?? breakdown.percentage,
     compactsAt: breakdown.isAutoCompactEnabled ? (breakdown.autoCompactThreshold ?? null) : null,
     slices,
-    limits: hasLive && was !== null ? was.limits : toLimits(rateLimits),
+    ...pickLimits(),
   }))
 }
 
@@ -318,7 +365,7 @@ export const register: Register = on => {
   on('turn.complete', async ($, e, next) => {
     if (e.agentId === undefined) {
       await markReply($)
-      await refresh($)
+      await refresh($, true)
       await poll($).catch(() => {})
     }
 
@@ -355,8 +402,9 @@ export const register: Register = on => {
       await update($, card, was => (was === null ? was : { ...was, tokens, window, percent }))
     }
 
-    if (!hasLive && e.changed.includes('rateLimits')) {
-      await update($, card, was => (was === null ? was : { ...was, limits: toLimits(e.rateLimits) }))
+    if (e.changed.includes('rateLimits')) {
+      await shareHeaders($, e.rateLimits)
+      await showLimits($)
     }
 
     return next(e)
@@ -375,6 +423,8 @@ export const register: Register = on => {
     const isDesktop = e.surface === 'desktop'
     const isNarrow = (e.props.bodyColumns ?? 100) < 64
     const weekly = now.limits.find(limit => limit.kind === 'seven_day')
+    // Nothing newer has come in for a while: the figure is drawn dim, and the breakdown says how old it is and why.
+    const isWeeklyStale = now.limitsAt > 0 && clock - now.limitsAt > STALE_MS
     const used = now.slices.filter(slice => !slice.isFree).sort((a, b) => b.tokens - a.tokens)
     // Checked while drawing, so the button appears whichever mod finished loading first.
     const hasSessions = (await $.command.list().catch(() => [])).some(command => command.name === 'sessions')
@@ -404,6 +454,12 @@ export const register: Register = on => {
             {now.compactsAt === null ? null : <Text dimColor>{`auto-compact at ${compact(now.compactsAt)}`}</Text>}
           </Box>
         </Box>
+        {weekly !== undefined && isWeeklyStale ? (
+          <Text dimColor>
+            {`weekly ${Math.round(weekly.percentUsed)}% was read ${age(clock - now.limitsAt)} ago`}
+            {now.refusedStatus === null ? '' : ` · the usage request is refused (${now.refusedStatus})`}
+          </Text>
+        ) : null}
         <Box flexDirection="row" overflow="hidden">
           {used.map(slice => (
             <Box key={`bar-${slice.name}`} width={`${Math.max(slice.percent, 1)}%`} flexShrink={0} overflow="hidden">
@@ -472,7 +528,11 @@ export const register: Register = on => {
             {weekly === undefined ? null : (
               <Box flexDirection="row" columnGap={1} flexShrink={0}>
                 {isNarrow ? null : <Text dimColor>weekly</Text>}
-                <Text bold color={limitColor(weekly.percentUsed)}>{`${Math.round(weekly.percentUsed)}%`}</Text>
+                {isWeeklyStale ? (
+                  <Text dimColor>{`${Math.round(weekly.percentUsed)}%`}</Text>
+                ) : (
+                  <Text bold color={limitColor(weekly.percentUsed)}>{`${Math.round(weekly.percentUsed)}%`}</Text>
+                )}
                 {weekly.resetsAt === undefined ? null : <Text dimColor>{`↻ ${resetsIn(weekly.resetsAt, clock)}`}</Text>}
               </Box>
             )}
