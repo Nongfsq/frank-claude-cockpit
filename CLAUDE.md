@@ -18,6 +18,6 @@ One text size; spacing only in whole cells and lines; no row backgrounds, custom
 
 ## Releasing
 
-- Bump `version` in the changed mod's `.claude-plugin/plugin.json`, commit, tag `vX.Y.Z`, push the branch and the tag. Ask before pushing.
+- Bump `version` in the changed mod's `.claude-plugin/plugin.json`, commit, tag `<mod>-vX.Y.Z` with that mod's version (`context-card-v0.1.3`), push the branch and the tag. Ask before pushing. The plain `v0.1.0`–`v0.1.4` tags are older repo-wide releases; leave them as they are.
 - When the interface changes, re-record the demo: see "Development" in the README.
 - Demo data and test fixtures are invented (project "Atlas", tasks `API-142`); never use real project or task names.
