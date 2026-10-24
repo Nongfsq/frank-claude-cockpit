@@ -25,6 +25,10 @@ export type Card = {
   compactsAt: number | null
   slices: Slice[]
   limits: Limit[]
+  /** When `limits` was read, epoch ms; 0 when unknown. */
+  limitsAt: number
+  /** The status the account's usage endpoint last refused with, until it answers again; null when it has not. */
+  refusedStatus: number | null
 }
 
 declare module 'claude-code' {

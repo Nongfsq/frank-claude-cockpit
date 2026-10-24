@@ -71,6 +71,12 @@ test('draws the card and its collapsed line on both surfaces', async ($, on) => 
   })
 
   await $.session.start({ cwd: '/', surface: 'desktop', isInteractive: true })
+  // A response reports the windows; what the session held before it was of unknown age and was not shown.
+  await $.session.measure({
+    context: { window: 1_000_000, tokens: 145_000, percent: 14 },
+    rateLimits: [{ kind: 'seven_day', percentUsed: 18, resetsAt: '2026-10-08T01:00:00Z' }],
+    changed: ['rateLimits'],
+  })
 
   for (const surface of ['terminal', 'desktop'] as const) {
     const ui = await $.ui.mount({ ...BAND, surface })
@@ -180,8 +186,8 @@ test('shows the usage another session fetched, and asks the account once when it
   expect(fetches).toBe(0)
   await ui.unmount()
 
-  // Three minutes on the shared figure is stale: this session asks, and the answer goes back into the file.
-  clockNow += 180_000
+  // Eleven minutes on, no session has brought a reading: this one asks, and the answer goes back into the file.
+  clockNow += 11 * 60_000
   await $.session.start({ cwd: '/', surface: 'desktop', isInteractive: true })
   const later = await $.ui.mount({ ...BAND, surface: 'desktop' })
   expect(await later.find({ text: /^55%$/ })).toBeDefined()
@@ -259,4 +265,95 @@ test('takes the cache lifetime from what the session recorded', async ($, on) =>
   const fresh = await $.ui.mount({ ...BAND, surface: 'desktop' })
   expect(await fresh.find({ text: /^●$/ })).toBeDefined()
   await fresh.unmount()
+})
+
+test('a reading any session brings reaches the file, and a refusal waits as long as it asks', async ($, on) => {
+  const NOW = Date.parse('2026-10-03T00:30:00Z')
+  // Another session last read the account 22 hours ago, and the latest request was refused.
+  let file = JSON.stringify({
+    at: NOW - 22 * 3_600_000,
+    triedAt: NOW - 400_000,
+    retryAt: NOW - 100_000,
+    status: 429,
+    limits: [{ kind: 'seven_day', percentUsed: 5, resetsAt: '2026-10-06T03:30:00Z' }],
+  })
+  let fetches = 0
+  let clockNow = NOW
+
+  on('session.usage', () => ({
+    value: {
+      startedAt: 0,
+      context: {
+        window: 1_000_000,
+        tokens: 145_000,
+        percent: 14,
+        breakdown: {
+          categories: [category('Messages', 145_000, 'purple_FOR_SUBAGENTS_ONLY'), category('Free space', 855_000, 'promptBorder', 'free')],
+          totalTokens: 145_000,
+          maxTokens: 1_000_000,
+          rawMaxTokens: 1_000_000,
+          autocompactSource: 'model',
+          percentage: 14,
+          gridRows: [],
+          model: 'claude-opus-5-5',
+          memoryFiles: [],
+          mcpTools: [],
+          agents: [],
+          autoCompactThreshold: 970_000,
+          isAutoCompactEnabled: true,
+          apiUsage: null,
+        },
+      },
+      rateLimits: [],
+    },
+  }))
+  on('env.get', () => ({ value: '/home/me' }))
+  on('fs.read', () => ({ value: file }))
+  on('fs.write', ($, e) => {
+    file = e.text
+    return { value: undefined }
+  })
+  on('session.authorize', () => ({ value: { handle: 'h' } }))
+  on('http.fetch', () => {
+    fetches += 1
+    return { value: { ok: false, status: 429, headers: { 'retry-after': '3600' }, text: '' } }
+  })
+  on('clock.now', () => ({ value: clockNow }))
+  on('clock.every', () => ({ value: undefined }))
+  on('session.start', ($, e) => ({ cwd: e.cwd }))
+  on('session.measure', ($, e) => ({ changed: e.changed }))
+  on('command.list', () => ({ value: [] }))
+
+  // No reading anywhere newer than 22 hours: the account is asked once, refused for an hour, and every session
+  // waits the hour. The old figure is drawn dim, and the breakdown says how old it is and why.
+  await $.session.start({ cwd: '/', surface: 'desktop', isInteractive: true })
+  expect(fetches).toBe(1)
+  expect(JSON.parse(file).retryAt).toBe(NOW + 3_600_000)
+  expect(JSON.parse(file).status).toBe(429)
+  const stale = await $.ui.mount({ ...BAND, surface: 'desktop' })
+  await stale.press({ key: 'toggle' })
+  expect(await stale.find({ text: /weekly 5% was read 22h ago/ })).toBeDefined()
+  expect(await stale.find({ text: /refused \(429\)/ })).toBeDefined()
+  await stale.press({ key: 'toggle' })
+  await stale.unmount()
+
+  // A response reports the windows: the reading goes into the file for every session, and is drawn at full color.
+  const reading = [{ kind: 'seven_day', percentUsed: 31, resetsAt: '2026-10-06T03:30:00Z' }]
+  await $.session.measure({ context: { window: 1_000_000, tokens: 145_000, percent: 14 }, rateLimits: reading, changed: ['rateLimits'] })
+  expect(JSON.parse(file).at).toBe(NOW)
+  expect(JSON.parse(file).limits[0].percentUsed).toBe(31)
+  const fresh = await $.ui.mount({ ...BAND, surface: 'desktop' })
+  expect(await fresh.find({ text: /^31%$/ })).toBeDefined()
+  await fresh.press({ key: 'toggle' })
+  expect(await fresh.find({ text: /was read/ })).toBeUndefined()
+  await fresh.unmount()
+
+  // Another session's newer reading, written to the file, is what this one shows next.
+  file = JSON.stringify({ ...JSON.parse(file), at: NOW + 60_000, limits: [{ ...reading[0], percentUsed: 33 }] })
+  clockNow += 60_000
+  await $.session.start({ cwd: '/', surface: 'desktop', isInteractive: true })
+  expect(fetches).toBe(1)
+  const synced = await $.ui.mount({ ...BAND, surface: 'desktop' })
+  expect(await synced.find({ text: /^33%$/ })).toBeDefined()
+  await synced.unmount()
 })
