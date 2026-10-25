@@ -196,7 +196,11 @@ test('shows the usage another session fetched, and asks the account once when it
   await later.unmount()
 })
 
-test('takes the cache lifetime from what the session recorded', async ($, on) => {
+// Where the end of the record comes from: tail where the host has one, PowerShell on a Windows without it, and
+// the file itself when neither runs.
+const READERS = ['tail', 'powershell', 'the file itself'] as const
+
+for (const reader of READERS) test(`takes the cache lifetime from what the session recorded, read by ${reader}`, async ($, on) => {
   const written = (lifetime: '5m' | '1h') =>
     JSON.stringify({ message: { usage: { cache_creation: { [`ephemeral_${lifetime}_input_tokens`]: 1_200 } } } })
   // The tail starts mid-line, and the newest response only read the cache.
@@ -232,9 +236,17 @@ test('takes the cache lifetime from what the session recorded', async ($, on) =>
   }))
   on('session.authorize', () => ({ value: null }))
   on('process.run', ($, e) => {
-    expect(e.argv.at(-1)).toBe('/home/me/atlas.jsonl')
+    expect(e.argv.join(' ')).toContain('/home/me/atlas.jsonl')
+    const isAnswered = e.argv[0] === reader
 
-    return { value: { exitCode: 0, stdout: record, stderr: '', isStdoutTruncated: false, isStderrTruncated: false } }
+    return { value: { exitCode: isAnswered ? 0 : 1, stdout: isAnswered ? record : '', stderr: '', isStdoutTruncated: false, isStderrTruncated: false } }
+  })
+  on('fs.read', ($, e) => {
+    expect(reader).toBe('the file itself')
+    // On Windows the engine resolves the path onto the current drive.
+    expect(e.path.replace(/\\/g, '/')).toMatch(/\/home\/me\/atlas\.jsonl$/)
+
+    return { value: record }
   })
   on('clock.now', () => ({ value: clockNow }))
   on('clock.every', () => ({ value: undefined }))

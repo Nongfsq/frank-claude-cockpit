@@ -20,6 +20,7 @@ const HOUR = 3_600_000
 
 const FIVE_MINUTES = 300_000
 const TAIL_BYTES = 400_000
+const TAIL_LINES = 200
 
 // The prompt cache: when the last response came back, and how long the cache lives. An hour until the
 // session's own record says otherwise: five minutes with an API key or once usage credits are being drawn.
@@ -53,13 +54,47 @@ const writtenTtl = (tail: string) => {
   return null
 }
 
+// The end of the record. Windows has no `tail` unless one was installed, so PowerShell's own reads it there, and
+// a record small enough for one `$.fs.read` is read whole as the last resort. Null when none of them could.
+const readTail = async ($: EngineInterface, path: string) => {
+  const ran = async (argv: string[]) => {
+    const result = await $.process.run(argv).catch(() => null)
+
+    return result !== null && result.exitCode === 0 ? result.stdout : null
+  }
+
+  // `-cN` attached: GnuWin32's tail 5.3 reads a separate count as a file name.
+  const viaTail = await ran(['tail', `-c${TAIL_BYTES}`, path])
+
+  if (viaTail !== null) {
+    return viaTail
+  }
+
+  const quoted = `'${path.replace(/'/g, "''")}'`
+  const viaPowerShell = await ran([
+    'powershell',
+    '-NoProfile',
+    '-NonInteractive',
+    '-Command',
+    `Get-Content -LiteralPath ${quoted} -Tail ${TAIL_LINES} -Encoding UTF8`,
+  ])
+
+  if (viaPowerShell !== null) {
+    return viaPowerShell
+  }
+
+  const whole = await $.fs.read(path).catch(() => null)
+
+  return typeof whole === 'string' ? whole.slice(-TAIL_BYTES) : null
+}
+
 const measureTtl = async ($: EngineInterface, transcriptPath: string) => {
   if (transcriptPath === '') {
     return
   }
 
-  const tail = await $.process.run(['tail', '-c', String(TAIL_BYTES), transcriptPath]).catch(() => null)
-  const ttlMs = tail === null || tail.exitCode !== 0 ? null : writtenTtl(tail.stdout)
+  const tail = await readTail($, transcriptPath)
+  const ttlMs = tail === null ? null : writtenTtl(tail)
 
   if (ttlMs !== null) {
     await update($, cache, was => ({ ...was, ttlMs }))
@@ -167,7 +202,8 @@ const showLimits = async ($: EngineInterface) => {
 }
 
 const sharedPath = async ($: EngineInterface) => {
-  const home = await $.env.get('HOME').catch(() => undefined)
+  // Windows has no HOME by default; USERPROFILE is its equivalent.
+  const home = (await $.env.get('HOME').catch(() => undefined)) || (await $.env.get('USERPROFILE').catch(() => undefined))
 
   return typeof home === 'string' && home !== '' ? `${home}/.claude/cache/context-card-usage.json` : null
 }
