@@ -2,20 +2,21 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<title>Claude Code Cockpit demo</title>
+<title>Context card demo</title>
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <style>
-/* A scripted walkthrough of the two mods. Every animated value is computed from one clock, `t` in ms, so a
-   recorder can step it frame by frame: open with ?t=1500 for a still, or call window.setT(ms). */
+/* A scripted walkthrough of context-card's one line. Every animated value is computed from one clock, `t` in ms,
+   so a recorder can step it frame by frame: open with ?t=1500 for a still, or call window.setT(ms).
+   The bar, knob and ring are drawn with the same SVG the mod sends the desktop (hooks/register.tsx). */
 :root {
-  --stage: #0E0E0D; --window: #171716; --band: #222220; --edge: #2E2D2B; --text: #F2F1EC; --dim: #8F8E89;
-  --rule: #6B6A66; --button: #343331; --bubble: #262624; --claude: #D97757; --blue: #7AA2F7; --working: #B1B9F9;
-  --merged: #AF87FF; --success: #4EBA65; --warning: #FFC107; --link: #8AB4F8; --cursor: #FFFFFF; --cursor-edge: #000000;
+  --stage: #0E0E0D; --window: #171716; --band: #222220; --edge: #2E2D2B; --text: #F2F1EC; --dim: #A3A29C;
+  --button: #343331; --surface: #1F1E1D; --hover: #2C2B29; --claude: #D97757; --blue: #B1B9F9;
+  --shadow: 0 8px 28px rgba(0, 0, 0, 0.5); --cursor: #FFFFFF; --cursor-edge: #000000;
 }
 :root[data-theme="light"] {
-  --stage: #EAE8E1; --window: #FAFAF8; --band: #EFEEEC; --edge: #DDDBD6; --text: #1A1A19; --dim: #6B6A66;
-  --rule: #A3A19A; --button: #F8F7F5; --bubble: #EFEEEC; --claude: #D05A36; --blue: #2A4FA3; --working: #5769F7;
-  --merged: #8700FF; --success: #2C7A39; --warning: #966C1E; --link: #2B5AB8; --cursor: #1A1A19; --cursor-edge: #FFFFFF;
+  --stage: #EAE8E1; --window: #FAFAF8; --band: #EFEEEC; --edge: #DDDBD6; --text: #1A1A19; --dim: #666666;
+  --button: #E4E3DF; --surface: #FFFFFF; --hover: #F0EFEC; --claude: #C15F3C; --blue: #2A4FA3;
+  --shadow: 0 8px 28px rgba(20, 20, 19, 0.12); --cursor: #1A1A19; --cursor-edge: #FFFFFF;
 }
 * { box-sizing: border-box; }
 html, body { margin: 0; background: var(--stage); }
@@ -23,62 +24,26 @@ body { font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'Segoe UI'
 .num { font-variant-numeric: tabular-nums; }
 .dim { color: var(--dim); }
 .bold { font-weight: 650; }
-.trunc { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
 #stage { position: relative; width: 1200px; height: 720px; overflow: hidden; background: var(--stage); }
 #window { position: absolute; left: 40px; top: 28px; width: 1120px; height: 606px; border-radius: 14px; border: 1px solid var(--edge); background: var(--window); overflow: hidden; display: flex; flex-direction: column; }
 #titlebar { height: 38px; flex-shrink: 0; display: flex; align-items: center; gap: 8px; padding: 0 14px; border-bottom: 1px solid var(--edge); }
 .light { width: 11px; height: 11px; border-radius: 50%; background: var(--edge); }
 #titlebar .name { margin-left: 10px; color: var(--dim); }
-#body { flex: 1; display: flex; min-height: 0; }
-#main { flex: 1; min-width: 0; display: flex; flex-direction: column; padding: 0 28px 20px; }
+#main { flex: 1; min-height: 0; display: flex; flex-direction: column; padding: 0 28px 20px; }
 #transcript { flex: 1; min-height: 0; overflow: hidden; display: flex; flex-direction: column; justify-content: flex-end; gap: 14px; padding-bottom: 18px; }
 .skeleton { display: flex; flex-direction: column; gap: 9px; }
 .skeleton span { height: 9px; border-radius: 5px; background: var(--edge); }
 .reveal { overflow: hidden; flex-shrink: 0; }
-.user { align-self: flex-end; max-width: 78%; padding: 9px 13px; border-radius: 12px; background: var(--bubble); }
-.answer { display: flex; flex-direction: column; gap: 6px; }
-.answer .line { display: flex; gap: 8px; }
-.answer .line .dot { color: var(--dim); }
 
-/* The card: one band above the prompt. */
-#band { border-radius: 12px; background: var(--band); display: flex; flex-direction: column; flex-shrink: 0; }
-#breakdownWrap { overflow: hidden; }
-#breakdown { padding: 14px 16px; border: 1px solid var(--edge); border-radius: 12px; display: flex; flex-direction: column; gap: 12px; }
-#breakdown .head { display: flex; align-items: baseline; justify-content: space-between; }
-.legend { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); column-gap: 28px; row-gap: 4px; }
-.legend div { display: flex; align-items: center; gap: 8px; }
-.legend .v { margin-left: auto; }
-.swatch { width: 9px; height: 9px; border-radius: 50%; flex-shrink: 0; }
-#line { display: flex; align-items: center; gap: 16px; height: 40px; padding: 0 8px 0 16px; }
-.bar { display: flex; align-items: center; height: 20px; }
-.bar i { display: block; height: 2px; flex-shrink: 0; }
-.bar .rest { flex: 1; height: 1px; background: var(--rule); }
-.pie { width: 10px; height: 10px; border-radius: 50%; background: var(--dim); flex-shrink: 0; }
-.btn { font: inherit; line-height: 20px; padding: 3px 10px; border: 0; border-radius: 7px; background: var(--button); color: var(--text); box-shadow: inset 0 0 0 1px var(--edge); white-space: nowrap; }
-#prompt { margin-top: 10px; border: 1px solid var(--edge); border-radius: 14px; padding: 14px 16px; color: var(--dim); flex-shrink: 0; }
-
-/* The sessions pane, docked on the right. */
-#paneWrap { flex-shrink: 0; overflow: hidden; border-left: 1px solid var(--edge); }
-#pane { width: 400px; height: 100%; display: flex; flex-direction: column; }
-#paneHead { display: flex; align-items: center; justify-content: space-between; padding: 10px 14px 6px 20px; color: var(--dim); }
-#paneBody { display: flex; flex-direction: column; padding: 6px 20px 20px; }
-.header { display: flex; align-items: center; gap: 16px; min-height: 26px; }
-.section { display: flex; flex-direction: column; margin-top: 16px; }
-.heading { display: flex; align-items: baseline; gap: 8px; }
-.row { display: flex; flex-direction: column; }
-.row .top { display: flex; align-items: baseline; }
-.mark { width: 16px; height: 20px; flex-shrink: 0; align-self: center; display: inline-flex; align-items: center; }
-.mark b { width: 9px; height: 9px; border-radius: 50%; display: block; }
-.mark b.half { border: 1.5px solid var(--working); background-origin: border-box; background-image: linear-gradient(90deg, var(--working) 50%, transparent 50%); }
-.tag { width: 76px; flex-shrink: 0; color: var(--dim); }
-.title { flex: 1; }
-.age { flex-shrink: 0; padding-left: 16px; color: var(--dim); }
-.second { display: flex; align-items: baseline; gap: 16px; padding-left: 16px; }
-.link { color: var(--link); }
-.details { padding: 12px 0 12px 16px; display: flex; flex-direction: column; gap: 12px; }
-.details .grid div { display: flex; align-items: baseline; }
-.details .k { width: 76px; flex-shrink: 0; color: var(--dim); }
-.actions { display: flex; align-items: center; gap: 16px; }
+/* The card: one line above the prompt. */
+#shot { padding: 8px 0 0; }
+#band { display: flex; align-items: center; gap: 14px; height: 40px; padding: 0 12px 0 16px; border-radius: 12px; background: var(--band); }
+.group { display: flex; align-items: center; gap: 6px; flex-shrink: 0; position: relative; }
+#chip { font: inherit; line-height: 20px; height: 20px; display: inline-flex; align-items: center; gap: 4px; padding: 0 6px 0 8px; border: 0; border-radius: 6px; background: var(--button); color: var(--text); white-space: nowrap; }
+#menu { position: absolute; right: 0; bottom: 30px; min-width: 120px; padding: 4px; border-radius: 10px; background: var(--surface); box-shadow: var(--shadow); display: flex; flex-direction: column; transform-origin: bottom right; }
+#menu div { display: flex; justify-content: space-between; gap: 16px; padding: 4px 10px; border-radius: 6px; }
+#knob { display: inline-flex; margin-left: -4px; }
+#prompt { margin-top: 10px; border: 1px solid var(--edge); border-radius: 14px; background: var(--surface); padding: 14px 16px; color: var(--dim); flex-shrink: 0; }
 
 /* The pointer, its click ring, and the caption under the window. */
 #cursor { position: absolute; left: 0; top: 0; width: 22px; height: 22px; pointer-events: none; z-index: 5; }
@@ -92,105 +57,37 @@ body { font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'Segoe UI'
 <div id="stage">
   <div id="window">
     <div id="titlebar"><span class="light"></span><span class="light"></span><span class="light"></span><span class="name">Atlas main</span></div>
-    <div id="body">
-      <div id="main">
-        <div id="transcript">
-          <div class="skeleton"><span style="width: 62%"></span><span style="width: 81%"></span><span style="width: 44%"></span></div>
-          <div class="skeleton"><span style="width: 74%"></span><span style="width: 38%"></span></div>
-          <div class="reveal" id="ask1"><div style="display: flex; flex-direction: column; gap: 14px">
-            <div class="user">Report the status of “API-145 webhook signatures” without messaging it.</div>
-            <div class="answer">
-              <div class="line"><span class="dot">●</span><span><span class="bold">API-145 webhook signatures</span> — HMAC verification is in and unit tests pass. CI on #45 is still running, 2 of 5 jobs done. No blocker; not ready to merge until CI is green.</span></div>
-            </div>
-          </div></div>
-          <div class="reveal" id="ask2"><div style="display: flex; flex-direction: column; gap: 14px">
-            <div class="user">Report the status of the 2 working sessions without messaging them.</div>
-            <div class="answer">
-              <div class="line"><span class="dot">●</span><span><span class="bold">API-142 rate-limit retries</span> — backoff is done, writing the integration test. PR #44 is open and green on the last push.</span></div>
-              <div class="line"><span class="dot">●</span><span><span class="bold">API-145 webhook signatures</span> — waiting on CI for #45. Nothing blocked.</span></div>
-            </div>
-          </div></div>
-          <div class="reveal" id="replying"><div class="dim">✻ Replying…</div></div>
-          <div class="reveal" id="ask3"><div style="display: flex; flex-direction: column; gap: 14px">
-            <div class="user">Report the outcome of these sessions without messaging them.</div>
-            <div class="answer">
-              <div class="line"><span class="dot">●</span><span><span class="bold">API-133 idempotency keys</span> — keys on every POST to /payments; merged in #39. Nothing left to follow up.</span></div>
-              <div class="line"><span class="dot">●</span><span><span class="bold">API-131 request tracing headers</span> — merged in #38. Passing the header on to the queue worker was noted as a follow-up, not started.</span></div>
-            </div>
-          </div></div>
-        </div>
+    <div id="main">
+      <div id="transcript">
+        <div class="skeleton"><span style="width: 62%"></span><span style="width: 81%"></span><span style="width: 44%"></span></div>
+        <div class="skeleton"><span style="width: 74%"></span><span style="width: 38%"></span></div>
+        <div class="skeleton"><span style="width: 58%"></span><span style="width: 86%"></span><span style="width: 31%"></span></div>
+        <div class="reveal" id="compacting"><div class="dim">✻ Compacting conversation…</div></div>
+        <div class="reveal" id="compacted"><div class="dim">Conversation compacted · API-142 rate-limit retries, summary kept</div></div>
+      </div>
 
+      <div id="shot">
         <div id="band">
-          <div id="breakdownWrap"><div id="breakdownInner" style="padding: 8px 8px 2px">
-            <div id="breakdown">
-              <div class="head">
-                <span class="num"><span class="bold" style="color: var(--claude)">27%</span> <span class="dim">of the context window</span></span>
-                <span class="num dim" style="display: flex; gap: 16px"><span style="display: inline-flex; align-items: center; gap: 6px"><span class="pie"></span>52m</span><span>auto-compact at 967k</span></span>
-              </div>
-              <div class="bar" id="bigBar"></div>
-              <div class="legend num" id="legend"></div>
-            </div>
-          </div></div>
-          <div id="line">
-            <span class="num bold" style="color: var(--claude)">27%</span>
-            <span class="num dim">272.3k / 1M</span>
-            <span class="pie"></span>
-            <div class="bar" id="smallBar" style="width: 182px"></div>
-            <span style="flex: 1"></span>
-            <span class="num" style="display: flex; gap: 7px"><span class="dim">weekly</span><span class="bold" style="color: var(--blue)">20%</span><span class="dim">↻ 4d 21h</span></span>
-            <span style="display: flex; align-items: center; gap: 8px"><button class="btn" id="prs" type="button">PRs</button><span class="num bold" style="color: var(--warning)">1</span></span>
+          <span class="num bold" id="pct"></span>
+          <div class="group">
+            <span class="num dim" id="used"></span>
+            <button id="chip" class="num" type="button"><span id="win"></span><svg width="10" height="10" viewBox="0 0 12 12" fill="none" stroke="var(--dim)" stroke-width="1.5" aria-hidden="true"><path d="M3 4.5l3 3 3-3"/></svg></button>
+            <div id="menu" class="num"></div>
+          </div>
+          <div class="group" style="gap: 0">
+            <span id="bar"></span>
+            <span id="knob"></span>
+          </div>
+          <span style="flex: 1"></span>
+          <div class="group num">
+            <span id="weeklyRing"></span>
+            <span class="dim">weekly</span>
+            <span class="bold" style="color: var(--blue)">20%</span>
+            <span class="dim">↻ 4d 21h</span>
           </div>
         </div>
         <div id="prompt">Reply to Claude…</div>
       </div>
-
-      <div id="paneWrap"><div id="pane">
-        <div id="paneHead"><span>Sessions</span><span>✕</span></div>
-        <div id="paneBody">
-          <div class="header">
-            <span class="bold">Atlas</span><span class="num dim" id="live">live · 4s</span><span style="flex: 1"></span>
-            <button class="btn" id="askAll" type="button">Ask 2 working</button><span>↻</span>
-          </div>
-          <div class="reveal" id="held"><div class="header" style="min-height: 20px"><span class="trunc" style="color: var(--warning)">After this turn: ask about 2 sessions</span><span style="flex: 1"></span><span>Cancel</span></div></div>
-
-          <div class="section">
-            <div class="heading"><span class="bold">Needs you</span><span class="num dim">1</span></div>
-            <div class="row">
-              <div class="top"><span class="mark"><b style="background: var(--success)"></b></span><span class="tag num">API-138</span><span class="title trunc">pagination cursors</span><span class="age num">6m</span></div>
-              <div class="second"><span style="color: var(--success)">ready to merge</span><span class="link num">#41</span></div>
-            </div>
-          </div>
-
-          <div class="section">
-            <div class="heading"><span class="bold">Working</span><span class="num dim">2</span></div>
-            <div class="row">
-              <div class="top"><span class="mark"><b class="half"></b></span><span class="tag num">API-142</span><span class="title trunc">rate-limit retries</span><span class="age num">12m</span></div>
-              <div class="second"><span style="color: var(--working)">working</span><span class="link num">#44</span></div>
-            </div>
-            <div class="row">
-              <div class="top" id="row145"><span class="mark"><b class="half"></b></span><span class="tag num">API-145</span><span class="title trunc" id="title145">webhook signatures</span><span class="age num">47m</span></div>
-              <div class="second"><span style="color: var(--working)">working · CI running</span><span class="link num">#45</span></div>
-              <div class="reveal" id="details"><div class="details">
-                <div class="grid">
-                  <div><span class="k">worktree</span><span class="trunc">brave-hopper-3f2a1c</span></div>
-                  <div><span class="k">branch</span><span class="trunc">claude/brave-hopper-3f2a1c</span></div>
-                  <div><span class="k">PR</span><span class="trunc">#45 · CI running</span></div>
-                  <div><span class="k">activity</span><span class="trunc">working 47m</span></div>
-                </div>
-                <div class="actions"><button class="btn" id="askOne" type="button">Ask here</button><span class="link">PR ↗</span></div>
-              </div></div>
-            </div>
-          </div>
-
-          <div class="section">
-            <div class="heading"><span id="doneHeading" style="display: flex; gap: 8px"><span id="doneLabel">Done</span><span class="num dim">2</span></span><span style="flex: 1"></span><span id="doneAsk">Ask</span></div>
-            <div class="reveal" id="done"><div>
-              <div class="row"><div class="top"><span class="mark"><b style="background: var(--merged)"></b></span><span class="tag num">API-133</span><span class="title trunc">idempotency keys</span><span class="age num">2h</span></div><div class="second"><span style="color: var(--merged)">merged</span><span class="link num">#39</span></div></div>
-              <div class="row"><div class="top"><span class="mark"><b style="background: var(--merged)"></b></span><span class="tag num">API-131</span><span class="title trunc">request tracing headers</span><span class="age num">3h</span></div><div class="second"><span style="color: var(--merged)">merged</span><span class="link num">#38</span></div></div>
-            </div></div>
-          </div>
-        </div>
-      </div></div>
     </div>
   </div>
 
@@ -203,33 +100,66 @@ body { font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'Segoe UI'
 <script>
 (function () {
   var params = new URLSearchParams(location.search)
-  if (params.get('theme') === 'light') document.documentElement.setAttribute('data-theme', 'light')
+  var isLight = params.get('theme') === 'light'
+  if (isLight) document.documentElement.setAttribute('data-theme', 'light')
 
   var $ = function (id) { return document.getElementById(id) }
-  var SLICES = [['messages', 196000, '#827DBD'], ['tools', 31200, '#C9C8BF'], ['mcp', 23400, '#0891B2'], ['skills', 10000, '#D4940A'], ['system', 4800, '#6B6A66'], ['memory', 1200, '#D97757']]
-  var compact = function (n) { return (Math.round(n / 100) / 10 + 'k').replace('.0k', 'k') }
-  var bars = SLICES.map(function (s) { return '<i style="width: ' + Math.max(s[1] / 10000, 0.6) + '%; background: ' + s[2] + '"></i>' }).join('') + '<i class="rest"></i>'
-  $('bigBar').innerHTML = bars
-  $('smallBar').innerHTML = bars
-  $('legend').innerHTML = SLICES.map(function (s) {
-    return '<div><span class="swatch" style="background: ' + s[2] + '"></span><span class="dim">' + s[0] + '</span><span class="v">' + compact(s[1]) + '</span></div>'
-  }).join('')
+
+  // The mod's own SVG, as hooks/register.tsx builds it.
+  var HUE = { claude: '#D97757', warning: '#E0A030', error: '#E5484D', suggestion: '#6B8AFD' }
+  var TRACK = '#8884', DIM = '#888C', ON_ACCENT = '#FFFFFF'
+  var hueOf = function (p) { return p >= 80 ? HUE.error : p >= 60 ? HUE.warning : HUE.claude }
+  var clamp = function (s) { return Math.min(Math.max(s, 0), 1) }
+  var svg = function (w, h, body) { return '<svg xmlns="http://www.w3.org/2000/svg" width="' + w + '" height="' + h + '" viewBox="0 0 ' + w + ' ' + h + '">' + body + '</svg>' }
+  var arc = function (r, share) { var len = 2 * Math.PI * r; return 'stroke-dasharray="' + (len * clamp(share)).toFixed(2) + ' ' + len.toFixed(2) + '"' }
+  var barSource = function (w, p, busy) {
+    var fill = Math.max(2, Math.round(w * clamp(p / 100)))
+    return svg(w, 10, '<rect y="2" width="' + w + '" height="6" rx="3" fill="' + TRACK + '"/><rect y="2" width="' + fill + '" height="6" rx="3" fill="' + (busy ? DIM : hueOf(p)) + '"/>')
+  }
+  var COMPRESS = 'M4 14h6v6M20 10h-6V4M14 10l7-7M3 21l7-7'
+  var knobSource = function (state, p, left) {
+    if (state === 'armed') {
+      return svg(20, 20, '<circle cx="10" cy="10" r="10" fill="' + HUE.claude + '"/>' +
+        '<circle cx="10" cy="10" r="8.2" fill="none" stroke="' + ON_ACCENT + '" stroke-opacity="0.35" stroke-width="1.6"/>' +
+        '<circle cx="10" cy="10" r="8.2" fill="none" stroke="' + ON_ACCENT + '" stroke-width="1.6" stroke-linecap="round" ' + arc(8.2, left) + ' transform="rotate(-90 10 10)"/>' +
+        '<path d="M6.6 10.3l2.3 2.3 4.5-4.9" fill="none" stroke="' + ON_ACCENT + '" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"/>')
+    }
+    if (state === 'compacting') {
+      return svg(20, 20, '<circle cx="10" cy="10" r="10" fill="' + TRACK + '"/><circle cx="10" cy="10" r="4.8" fill="none" stroke="' + DIM + '" stroke-width="1.5"/><path d="M10 5.2a4.8 4.8 0 0 1 0 9.6z" fill="' + DIM + '"/>')
+    }
+    var hot = p >= 80
+    var icon = hot ? ON_ACCENT : p >= 60 ? hueOf(p) : DIM
+    return svg(20, 20, '<circle cx="10" cy="10" r="10" fill="' + (hot ? hueOf(p) : TRACK) + '"/>' +
+      '<g transform="translate(4 4) scale(0.5)"><path d="' + COMPRESS + '" fill="none" stroke="' + icon + '" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"/></g>')
+  }
+  var ringSource = function (used, week, hue) {
+    return svg(16, 16, '<circle cx="8" cy="8" r="6.9" fill="none" stroke="' + TRACK + '" stroke-width="2"/>' +
+      '<circle cx="8" cy="8" r="6.9" fill="none" stroke="' + hue + '" stroke-width="2" stroke-linecap="round" ' + arc(6.9, used) + ' transform="rotate(-90 8 8)"/>' +
+      '<circle cx="8" cy="8" r="3.2" fill="none" stroke="' + TRACK + '" stroke-width="1.8"/>' +
+      '<circle cx="8" cy="8" r="3.2" fill="none" stroke="' + DIM + '" stroke-width="1.8" ' + arc(3.2, week) + ' transform="rotate(-90 8 8)"/>')
+  }
+  var compact = function (k) { return (Math.round(k * 10) / 10 + 'k').replace('.0k', 'k') }
+  // The text hues the desktop theme gives claude, warning and error.
+  var textHue = function (p) { return p >= 80 ? (isLight ? '#AB2B3F' : '#FF6B80') : p >= 60 ? (isLight ? '#966C1E' : '#FFC107') : 'var(--claude)' }
+
+  // Weekly: 20% of the plan used, 4d 21h left of the week (2d 3h gone).
+  $('weeklyRing').innerHTML = ringSource(0.2, (2 * 24 + 3) / (7 * 24), HUE.suggestion)
+  var OPTIONS = ['400k', '500k', '600k', 'Auto', 'Off']
+  $('menu').innerHTML = OPTIONS.map(function (o) { return '<div data-o="' + o + '"><span>' + o + '</span><span class="dim mark"></span></div>' }).join('')
 
   // The script: each step moves the pointer to a target, clicks at `at`, and the caption explains it.
   var STEPS = [
-    { at: 1500, target: 'smallBar', caption: '<b>Click the bar</b> — see where the context went' },
-    { at: 4300, target: 'smallBar', caption: '<b>Click again</b> — back to one quiet line' },
-    { at: 5900, target: 'prs', caption: '<b>PRs</b> — every session in the project, grouped by what it needs' },
-    { at: 9000, target: 'title145', caption: '<b>Click a session</b> — its worktree, branch, PR and activity' },
-    { at: 12000, target: 'askOne', caption: '<b>Ask here</b> — Claude reads that session’s transcript; the session is not interrupted' },
-    { at: 16200, target: 'askAll', caption: '<b>Ask 2 working</b> — one click for everything in flight' },
-    { at: 18000, target: 'doneAsk', caption: '<b>Ask</b> on Done mid-reply — it waits in view, with Cancel, and sends when the turn ends' },
-    { at: 23600, target: 'doneHeading', caption: '<b>Done</b> — folded until you want it' },
+    { at: 1600, target: 'knob', caption: '<b>Click the knob</b> — it turns into a check for three seconds' },
+    { at: 3100, target: 'knob', caption: '<b>Click again</b> — it compacts, as /compact does' },
+    { at: 7600, target: 'chip', caption: '<b>The window is a dropdown</b> — the auto-compact window, as /autocompact sets it' },
+    { at: 10000, target: 'opt600k', caption: '<b>600k</b> — the line measures against it at once' },
   ]
-  var TOTAL = 26800
-  // When the reply to Ask 2 working ends, and the held ask about Done goes out.
-  var TURN_END = 19800
+  var TOTAL = 13400
+  var ARM_MS = 3000
+  // How long the compaction runs after the second click.
+  var COMPACT_MS = 2600
   var MOVE = 800
+  var USED = 135.2, KEPT = 41.8
 
   var ease = function (p) { return p < 0 ? 0 : p > 1 ? 1 : p * p * (3 - 2 * p) }
   var prog = function (t, start, dur) { return ease((t - start) / dur) }
@@ -242,43 +172,49 @@ body { font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'Segoe UI'
     el.style.height = p >= 1 ? 'auto' : Math.round(p * el.firstElementChild.offsetHeight) + 'px'
     el.style.opacity = p
   }
+  Array.prototype.forEach.call($('menu').children, function (row) { row.id = 'opt' + row.getAttribute('data-o') })
 
   window.TOTAL = TOTAL
   window.setT = function (t) {
-    // State, each a 0..1 progress from its click.
-    var cardOpen = prog(t, STEPS[0].at, 320) - prog(t, STEPS[1].at, 320)
-    var paneOpen = prog(t, STEPS[2].at, 420)
-    var rowOpen = prog(t, STEPS[3].at, 320)
-    var doneOpen = prog(t, STEPS[7].at, 320)
+    var armedAt = STEPS[0].at, compactAt = STEPS[1].at, doneAt = compactAt + COMPACT_MS
+    var state = t >= compactAt && t < doneAt ? 'compacting' : t >= armedAt && t < compactAt ? 'armed' : 'idle'
+    var windowK = t >= STEPS[3].at ? 600 : 500
+    var used = t >= doneAt ? KEPT : USED
+    var pct = Math.round(used / windowK * 100)
 
-    $('breakdownWrap').style.height = Math.round(cardOpen * $('breakdownInner').offsetHeight) + 'px'
-    $('breakdownWrap').style.opacity = cardOpen
-    $('paneWrap').style.width = Math.round(paneOpen * 400) + 'px'
-    reveal('details', rowOpen)
-    $('title145').style.fontWeight = rowOpen > 0.5 ? 650 : 400
-    reveal('done', doneOpen)
-    $('doneLabel').style.fontWeight = doneOpen > 0.5 ? 650 : 400
-    $('doneLabel').style.color = doneOpen > 0.5 ? 'var(--text)' : 'var(--dim)'
-    reveal('ask1', prog(t, STEPS[4].at + 250, 450))
-    // The reply to Ask 2 working runs until the turn ends; the Ask on Done waits for it in the pane.
-    reveal('ask2', prog(t, STEPS[5].at + 250, 450))
-    var replying = prog(t, STEPS[5].at + 700, 200) - prog(t, TURN_END - 200, 200)
-    reveal('replying', replying)
-    // Gone once it has shown, so it leaves no gap in the transcript above the next question.
-    $('replying').style.display = t > TURN_END && replying <= 0 ? 'none' : ''
-    reveal('held', prog(t, STEPS[6].at, 300) - prog(t, TURN_END, 300))
-    reveal('ask3', prog(t, TURN_END + 200, 600))
-    var lastAsk = t >= TURN_END ? TURN_END : t >= STEPS[5].at ? STEPS[5].at : STEPS[4].at
-    $('live').textContent = t >= STEPS[4].at ? 'asked ' + Math.max(1, Math.floor((t - lastAsk) / 1000)) + 's ago' : 'live · 4s'
+    $('pct').textContent = pct + '%'
+    $('pct').style.color = textHue(pct)
+    // The saved window is the one in force, so only the used figure is written out beside the dropdown.
+    $('used').textContent = compact(used) + ' /'
+    $('win').textContent = windowK + 'k'
+    $('bar').innerHTML = barSource(120, pct, state === 'compacting')
+    $('knob').innerHTML = knobSource(state, pct, 1 - (t - armedAt) / ARM_MS)
+
+    var menuOpen = prog(t, STEPS[2].at, 160) - prog(t, STEPS[3].at + 120, 160)
+    $('menu').style.opacity = menuOpen
+    $('menu').style.visibility = menuOpen > 0 ? 'visible' : 'hidden'
+    $('menu').style.transform = 'scale(' + (0.96 + 0.04 * menuOpen) + ')'
+    Array.prototype.forEach.call($('menu').children, function (row) {
+      var o = row.getAttribute('data-o')
+      var on = o === windowK + 'k'
+      row.querySelector('.mark').textContent = on ? '✓' : ''
+      row.style.fontWeight = on ? 650 : 400
+      row.style.background = o === '600k' && t >= STEPS[3].at - 300 ? 'var(--hover)' : 'transparent'
+    })
+
+    reveal('compacting', prog(t, compactAt + 150, 250) - prog(t, doneAt, 250))
+    $('compacting').style.display = t > doneAt + 250 ? 'none' : ''
+    reveal('compacted', prog(t, doneAt + 150, 400))
 
     // The pointer travels to each target during the MOVE before its click, and rests there in between.
-    var from = { x: 520, y: 300 }
+    var from = { x: 640, y: 300 }
     for (var i = 0; i < STEPS.length; i++) {
       var to = centre(STEPS[i].target)
       var p = prog(t, STEPS[i].at - MOVE - 120, MOVE)
       from = { x: from.x + (to.x - from.x) * p, y: from.y + (to.y - from.y) * p }
     }
     $('cursor').style.transform = 'translate(' + (from.x - 3) + 'px,' + (from.y - 2) + 'px)'
+    $('cursor').style.display = params.has('still') ? 'none' : ''
 
     var ring = $('ring'), ringOn = 0
     STEPS.forEach(function (step) {
@@ -305,6 +241,12 @@ body { font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'Segoe UI'
     $('caption').innerHTML = caption
     $('caption').style.opacity = opacity
     $('progress').style.width = Math.round((t / TOTAL) * 1120) + 'px'
+  }
+
+  // The README stills: the card and the prompt, cropped by the recorder to this box.
+  window.SHOT = function () {
+    var r = $('shot').getBoundingClientRect()
+    return { x: r.left - 16, y: r.top - 10, width: r.width + 32, height: r.height + 18 }
   }
 
   if (params.has('t')) {
