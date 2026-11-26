@@ -1,11 +1,6 @@
 # Claude Code Cockpit
 
-Two mods for [Claude Code](https://claude.com/claude-code) for people who run many sessions at once: one line above the prompt that tells you what this session is costing, and one pane beside the chat that tells you what every other session is doing.
-
-<picture>
-  <source media="(prefers-color-scheme: dark)" srcset="docs/demo-dark.gif">
-  <img src="docs/demo-light.gif" alt="A walkthrough: click the bar to see the context breakdown, click PRs to open the sessions pane, open a session, ask about it, ask about everything in flight, ask about the done ones while Claude is still replying, unfold them.">
-</picture>
+A mod for [Claude Code](https://claude.com/claude-code): one line above the prompt that tells you how full this session's context is, what it is costing, and when it will compact, with auto-compact's window and a compact button on the line itself.
 
 Unofficial. Not affiliated with Anthropic.
 
@@ -15,81 +10,45 @@ Unofficial. Not affiliated with Anthropic.
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="docs/card-dark.png">
-  <img src="docs/card-light.png" alt="The context card with its breakdown open.">
+  <img src="docs/card-light.png" alt="The context card: percent, used of the window, the bar with its compact knob, and weekly usage.">
 </picture>
 
 | On the line | Meaning |
 | --- | --- |
-| `27%` `272.3k / 1M` | How full the context window is. Turns amber at 60%, red at 80%. |
-| `●` `◐` `○` | The prompt cache: fresh, past half its life, expired. Sending a message on an expired cache re-reads the whole context at full price. |
-| The thin bar | The same percentage, colored by what is using it. |
-| `weekly 20% ↻ 4d 21h` | Your plan's weekly usage and when it resets, read live from your account. |
-| `PRs` | Opens the sessions pane. A number beside it counts sessions waiting on you. |
+| `27%` | How full the context is, measured as `/context` measures it: against the auto-compact window when auto-compact is on. Turns amber at 60%, red at 80%. |
+| `159.5k /` `500k ▾` | Tokens used, of the auto-compact window. The window is a dropdown: `400k` `500k` `600k` `Auto` (saved for the model as `/autocompact` saves it) or `Off`. When the window in force is not the one picked (Auto, Off, or one the engine raised for a long conversation), its number is written out too. |
+| The bar and its knob | The same percentage, with a compact button at its end. Below 60% the first click turns the knob into a check for three seconds and a second click compacts; from 60% one click compacts. It shows a half disc while any compaction runs. |
+| `◎` `weekly 20% ↻ 4d 21h` | Your plan's weekly usage and when it resets, read live from your account. The double ring sets the plan used (outer) against how much of the week has gone (inner). |
 
-Click anywhere on the line to open the breakdown (messages, tools, MCP, skills, system, memory), the cache's minutes left, and where auto-compact will run. Click again to close it.
-
-### `pr-pane`: the sessions pane
-
-<picture>
-  <source media="(prefers-color-scheme: dark)" srcset="docs/sessions-dark.png">
-  <img src="docs/sessions-light.png" alt="The sessions pane docked beside the chat.">
-</picture>
-
-Every session in the same sidebar group, sorted by what it needs from you:
-
-| Section | What is in it |
-| --- | --- |
-| **Needs you** | CI failing, conflicts, changes requested, ready to merge, or idle with nothing to show. |
-| **Working** | Sessions running right now. |
-| **Done** | Merged or closed. Folded until you click the heading; its **Ask** works either way. |
-| **Loose worktrees** | Worktrees no session holds, and whether they have uncommitted changes. |
-
-Each row has one time, on the right: how long it has been in the state its status names (`working` for 47m, `merged` 2h ago).
-
-| Control | What it does |
-| --- | --- |
-| Click a session | Shows its worktree, branch, PR and activity. |
-| **Ask here** | Asks, in the session you are in, for that session's status. Claude reads the other session's transcript and checks its PR; the other session is not messaged or interrupted. |
-| **Ask N working** | The same, for every session that is running; with none running, **Ask N open** asks about every unfinished one. |
-| **Ask** on the Done heading | Asks what the finished sessions changed, how they ended, and what they left to follow up. |
-| `#45`, `PR ↗` | Opens the pull request on GitHub. |
-| `↻` | Refreshes now. The pane also refreshes itself every 15 seconds. |
-| A section heading | Folds or unfolds the section. |
-
-An Ask pressed while Claude is still replying in your session waits on a line under the header, `After this turn: ask about …`, with **Cancel**, and is sent when the reply ends. One waits at a time: pressing Ask again replaces it.
-
-Outside any project, the pane shows every project's sessions as one overview.
+Every control runs the official `/config` row or slash command. The prompt-cache mark is gone: Claude Code now compacts an idle session before its cache expires.
 
 ## Install
 
-Both mods together, from this repository:
+From this repository:
 
 ```
 /plugin marketplace add Nongfsq/frank-claude-cockpit
 /plugin install context-card@frank-claude-cockpit
-/plugin install pr-pane@frank-claude-cockpit
 ```
 
-Or copy the two folders into `~/.claude/skills/` and start a new session:
+Or copy the folder into `~/.claude/skills/` and start a new session:
 
 ```bash
 git clone https://github.com/Nongfsq/frank-claude-cockpit
-cp -R frank-claude-cockpit/context-card frank-claude-cockpit/pr-pane ~/.claude/skills/
+cp -R frank-claude-cockpit/context-card ~/.claude/skills/
 ```
 
-Install both: the `PRs` button lives in `context-card` and appears only when `pr-pane` is present.
+The sessions pane, `pr-pane`, is retired: Claude Code's own `/ship` now opens, reviews and watches pull requests. Its last version is in this repository's history.
 
 ## Requirements
 
-- **A recent Claude Code.** These mods use the hooks-module API (`ui.render`, `$.state`); they were built and tested on 2.1.286.
+- **A recent Claude Code.** The mod uses the hooks-module API (`ui.render`, `$.state`); it is tested on 2.1.330.
 - **`context-card`'s weekly usage** needs a Claude subscription login. With an API key the card still shows context, without the weekly figure.
-- **`pr-pane`** needs the Claude desktop app, which is where the session list comes from; in a plain terminal it says the list is unavailable. PR and CI state come from the [`gh`](https://cli.github.com) CLI, logged in.
 
 ## What leaves your machine
 
 - `context-card` asks `api.anthropic.com` for your own plan usage with the login Claude Code already holds, at most once every two minutes however many sessions are open: one session asks and the rest read its answer from `~/.claude/cache/context-card-usage.json`. That request uses no tokens.
-- `pr-pane` runs `git` and `gh` locally, in the project's folder.
-- Each **Ask** sends one prompt in your current session, so it costs what a prompt costs there.
+- **The compact knob** compacts the conversation as `/compact` does, which costs what a compaction costs.
 
 Nothing else is sent anywhere.
 
@@ -98,23 +57,11 @@ Nothing else is sent anywhere.
 ```bash
 claude plugin validate context-card
 claude plugin test context-card
-claude plugin test pr-pane
 ```
 
 Types for an editor: run `/plugin-types` inside a mod's folder.
 
-The demo above is a scripted page, [`docs/demo/index.html`](docs/demo/index.html); open it in a browser to watch it loop, or add `?theme=light`. To re-record it, both themes, as GIF and MP4, with the sessions screenshot cropped from the last frame:
-
-```bash
-cd docs/demo && npm i puppeteer-core
-for theme in dark light; do
-  rm -rf frames && node record.mjs frames $theme 15
-  ffmpeg -y -framerate 15 -i frames/f%04d.png -vf "scale=1200:-1:flags=lanczos,split[a][b];[a]palettegen=max_colors=128:stats_mode=diff[p];[b][p]paletteuse=dither=bayer:bayer_scale=5:diff_mode=rectangle" ../demo-$theme.gif
-  ffmpeg -y -framerate 15 -i frames/f%04d.png -vf "scale=1800:-2:flags=lanczos" -c:v libx264 -pix_fmt yuv420p -crf 23 -movflags +faststart ../demo-$theme.mp4
-  ffmpeg -y -i frames/$(ls frames | tail -1) -vf "crop=2280:1240:60:36" ../sessions-$theme.png
-done
-rm -rf frames
-```
+The card's screenshots and demo come from a scripted page, [`docs/demo/index.html`](docs/demo/index.html), recorded with [`docs/demo/record.mjs`](docs/demo/record.mjs). It still shows the retired sessions pane and is rebuilt with the card's redesign.
 
 ## Support
 

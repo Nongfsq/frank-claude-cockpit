@@ -1,7 +1,7 @@
 {
   "name": "context-card",
-  "version": "0.1.3",
-  "description": "Context window breakdown and plan usage, in the band above the prompt.",
+  "version": "0.2.0",
+  "description": "Context window fill, auto-compact controls and plan usage, in the band above the prompt.",
   "types": "./types/index.d.ts",
   "author": {
     "name": "Nongfsq"
