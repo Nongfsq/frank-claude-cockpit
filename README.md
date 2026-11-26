@@ -16,7 +16,7 @@ Unofficial. Not affiliated with Anthropic.
 | On the line | Meaning |
 | --- | --- |
 | `27%` | How full the context is, measured as `/context` measures it: against the auto-compact window when auto-compact is on. Turns amber at 60%, red at 80%. |
-| `159.5k /` `500k ▾` | Tokens used, of the auto-compact window. The window is a dropdown: `400k` `500k` `600k` `Auto` (saved for the model as `/autocompact` saves it) or `Off`. When the window in force is not the one picked (Auto, Off, or one the engine raised for a long conversation), its number is written out too. |
+| `135.2k /` `500k ▾` | Tokens used, of the auto-compact window. The window is a dropdown: `400k` `500k` `600k` `Auto` (saved for the model as `/autocompact` saves it) or `Off`. When the window in force is not the one picked (Auto, Off, or one the engine raised for a long conversation), its number is written out too. |
 | The bar and its knob | The same percentage, with a compact button at its end. Below 60% the first click turns the knob into a check for three seconds and a second click compacts; from 60% one click compacts. It shows a half disc while any compaction runs. |
 | `◎` `weekly 20% ↻ 4d 21h` | Your plan's weekly usage and when it resets, read live from your account. The double ring sets the plan used (outer) against how much of the week has gone (inner). |
 
@@ -61,7 +61,7 @@ claude plugin test context-card
 
 Types for an editor: run `/plugin-types` inside a mod's folder.
 
-The card's screenshots and demo come from a scripted page, [`docs/demo/index.html`](docs/demo/index.html), recorded with [`docs/demo/record.mjs`](docs/demo/record.mjs). It still shows the retired sessions pane and is rebuilt with the card's redesign.
+The card's screenshots and demo come from a scripted page, [`docs/demo/index.html`](docs/demo/index.html), which draws the line with the same SVG the mod sends the desktop. [`docs/demo/record.mjs`](docs/demo/record.mjs) records it: `node record.mjs docs <light|dark> still` writes `docs/card-<theme>.png`, and `node record.mjs <dir> <theme> 15` writes the demo's frames.
 
 ## Support
 
